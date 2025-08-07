@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/*",
+    "python/lyricore-py",
+]
+default-members = [
+    "crates/*",
+]
+
+[workspace.package]
+version = "0.1.0"
+authors = ["fangyinc <staneyffer@gmail.com>"]
+edition = "2021"
+homepage = "https://github.com/fangyinc/lyric"
+license = "MIT"
+repository = "https://github.com/fangyinc/lyric"
+
+[workspace.dependencies]
+
+async-trait = "0.1.88"
+serde = { version = "1.0", features = ["derive"] }
+# Each data format lives in its own crate; the sample code below uses JSON
+serde_json = "1.0"
+rmp-serde = "1.3.0"
+bincode = "2.0.1"
+uuid = { version = "1.10.0", features = ["v4"] }
+tracing = "0.1"
+# tracing-subscriber = { version = "0.3", features = ["chrono", "env-filter", "json"] }
+tracing-subscriber = { version = "0.3"}
+tracing-appender = "0.2.3"
+thiserror = "1.0"
+anyhow = "1.0"
+
+# tokio = { version = "1.0", features = ["full"] }
+tokio = { version = "1.0", default-features = false}
+# tokio-stream = "0.1"
+# crossbeam = "0.8"
+dashmap = "6.1.0"
+num_cpus = "1.0"
+tonic = "0.14.0"
+prost = "0.14.1"
+tonic-prost = "0.14.0"
+futures = "0.3.31"
+lazy_static = "1.5.0"
+pyo3 = { version = "0.25", default-features = false}
+pyo3-async-runtimes = { version = "0.25", default-features = false }
+
+
+lyricore = { version = "0.1.0", path = "crates/lyricore", default-features = false }
+lyricore-store = { version = "0.1.0", path = "crates/lyricore-store", default-features = false }

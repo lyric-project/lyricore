@@ -1,0 +1,54 @@
+[package]
+name = "lyricore"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+pyo3 = ["dep:pyo3"]
+
+[dependencies]
+
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rmp-serde = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["chrono", "env-filter", "json"] }
+tracing-appender = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process"] }
+dashmap = { workspace = true }
+num_cpus = { workspace = true }
+tonic = {workspace = true, features = ["server"]}
+prost = { workspace = true }
+tonic-prost = { workspace = true }
+futures = { workspace = true }
+lazy_static = { workspace = true }
+pyo3 = { workspace = true, optional = true }
+
+[build-dependencies]
+tonic-prost-build = "0.14.0"
+
+[dev-dependencies]
+tokio-test = "0.4.4"
+criterion = { version = "0.5", features = ["html_reports", "async"] }
+
+[[bin]]
+name = "local-performance"
+path = "benches/local_performance.rs"
+
+[[bin]]
+name ="actor-benchmarks"
+path = "benches/actor_benchmarks.rs"
+
+[[bin]]
+name = "remote-performance"
+path = "examples/remote_performance.rs"
+
+

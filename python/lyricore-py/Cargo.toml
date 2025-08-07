@@ -1,0 +1,58 @@
+[package]
+name = "lyricore-py"
+version = { workspace = true}
+authors = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+readme = { workspace = true }
+description = "Python bindings for Lyric: A Rust-powered secure sandbox for multi-language code execution, leveraging WebAssembly to provide high-performance runtime isolation for AI applications"
+
+include = [
+    "/pyproject.toml",
+    "/README.md",
+    "/LICENSE",
+    "/Makefile",
+    "/build.rs",
+    "/rust-toolchain",
+    "/src",
+    "/python/lyricore_py",
+    "/tests",
+    "/.cargo",
+    "!__pycache__",
+    "!tests/.hypothesis",
+    "!tests/.pytest_cache",
+    "!*.so",
+]
+
+[dependencies]
+pyo3 = { workspace = true, features = ["extension-module", "experimental-async", "generate-import-lib", "num-bigint", "py-clone"] }
+pyo3-async-runtimes = { workspace = true, features = ["attributes", "tokio-runtime"] }
+lyricore = { workspace = true, features = ["pyo3"]}
+lyricore-store = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["fs"] }
+serde = { workspace = true, features = ["derive"] }
+futures = { workspace = true }
+num_cpus = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+
+[lib]
+name = "_lyricore_py"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# must be enabled when building with `cargo build`, maturin enables this automatically
+default = ["mmap"]
+extension-module = ["pyo3/extension-module"]
+mmap = ["lyricore-store/mmap"]
+
+[dev-dependencies]
+pyo3 = { version = "0.25", features = ["auto-initialize"] }
+
+[build-dependencies]
+version_check = "0.9.5"
+# used where logic has to be version/distribution specific, e.g. pypy
+pyo3-build-config = { version = "0.25" }

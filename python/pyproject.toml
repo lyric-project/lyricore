@@ -1,0 +1,68 @@
+[project]
+name = "lyricore-mono"
+version = "0.1.0"
+description = """"""
+authors = [
+    { name = "Fangyin Cheng", email = "staneyffer@gmail.com" }
+]
+dependencies = []
+readme = "README.md"
+requires-python = ">= 3.10"
+
+
+[tool.uv.sources]
+lyricore-py = { workspace = true }
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true
+
+[tool.uv.workspace]
+members = [
+    "lyricore-py",
+]
+
+[tool.uv]
+managed = true
+dev-dependencies = [
+    "maturin",
+    "jupyter>=1.1.1",
+    'pytest',
+    'pytest-asyncio',
+    'pytest-timeout',
+    "ruff>=0.9.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["lyricore-py"]
+addopts = ["--import-mode=importlib", ]
+python_files = ["test_*.py", "*_test.py"]
+log_format = '%(name)s %(levelname)s: %(message)s'
+filterwarnings = [
+    'error',
+    # Python 3.9 and below allowed truncation of float to integers in some
+    # cases, by not making this an error we can test for this behaviour
+    'ignore:(.+)Implicit conversion to integers using __int__ is deprecated',
+]
+timeout = 30
+
+[tool.ruff]
+line-length = 120
+target-version = 'py310'
+
+[tool.ruff.lint]
+extend-select = ['Q', 'RUF100', 'C90', 'I', 'UP']
+extend-ignore = [
+    'E721', # using type() instead of isinstance() - we use this in tests
+]
+flake8-quotes = { inline-quotes = 'single', multiline-quotes = 'double' }
+mccabe = { max-complexity = 13 }
+isort = { known-first-party = ['lyricore_py', 'tests'] }
+
+[tool.ruff.lint.pyupgrade]
+keep-runtime-typing = true
+
+[tool.ruff.format]
+quote-style = 'single'

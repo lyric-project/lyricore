@@ -1,0 +1,93 @@
+// actor_service.proto
+syntax = "proto3";
+
+package actor_service;
+
+service ActorService {
+    // Sends a message to an actor without expecting a response(fire-and-forget).
+    rpc Tell(TellRequest) returns (TellResponse);
+
+    // Sends a message to an actor and waits for a response.
+    rpc Ask(AskRequest) returns (AskResponse);
+
+    // Node management and health check
+    rpc Ping(PingRequest) returns (PingResponse);
+    rpc GetNodeInfo(NodeInfoRequest) returns (NodeInfoResponse);
+}
+
+// Message envelope containing serialization metadata
+message MessageEnvelope {
+    string message_type = 1;           // Message type identifier
+    SerializationFormat format = 2;    // Serialization format
+    uint32 schema_version = 3;         // Message schema version
+    bytes payload = 4;                 // Message payload
+    map<string, string> metadata = 5;  // Extended metadata
+    optional bytes checksum = 6;       // Checksum for integrity verification
+}
+
+// Supported serialization formats
+enum SerializationFormat {
+    JSON = 0;
+    PROTOBUF = 1;
+    MESSAGEPACK = 2;
+    CUSTOM = 255;
+}
+
+// Tell request
+message TellRequest {
+    string actor_id = 1;
+    MessageEnvelope envelope = 2;
+    optional string trace_id = 3;      // Tracing ID
+}
+
+message TellResponse {
+    bool success = 1;
+    optional string error = 2;
+    optional string trace_id = 3;
+}
+
+// Ask request
+message AskRequest {
+    string actor_id = 1;
+    MessageEnvelope envelope = 2;
+    string correlation_id = 3;         // request-response correlation ID
+    optional uint32 timeout_ms = 4;    // timeout in milliseconds
+    optional string trace_id = 5;
+}
+
+message AskResponse {
+    string correlation_id = 1;
+    bool success = 2;
+    optional MessageEnvelope response_envelope = 3;
+    optional string error = 4;
+    optional string trace_id = 5;
+}
+
+message PingRequest {
+    string node_id = 1;
+    int64 timestamp = 2;
+}
+
+message PingResponse {
+    string node_id = 1;
+    int64 timestamp = 2;
+    NodeCapabilities capabilities = 3;
+}
+
+message NodeInfoRequest {
+    string node_id = 1;
+}
+
+message NodeInfoResponse {
+    string node_id = 1;
+    string version = 2;
+    NodeCapabilities capabilities = 3;
+    repeated string supported_message_types = 4;
+}
+
+message NodeCapabilities {
+    repeated SerializationFormat supported_formats = 1;
+    bool supports_streaming = 2;
+    bool supports_compression = 3;
+    repeated string compression_algorithms = 4;
+}
