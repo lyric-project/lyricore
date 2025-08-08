@@ -10,6 +10,11 @@ service ActorService {
     // Sends a message to an actor and waits for a response.
     rpc Ask(AskRequest) returns (AskResponse);
 
+    rpc StreamTell(stream TellRequest) returns (stream TellResponse);
+    rpc StreamAsk(stream AskRequest) returns (stream AskResponse);
+    rpc BidirectionalStream(stream StreamMessage) returns (stream StreamMessage);
+
+
     // Node management and health check
     rpc Ping(PingRequest) returns (PingResponse);
     rpc GetNodeInfo(NodeInfoRequest) returns (NodeInfoResponse);
@@ -61,6 +66,21 @@ message AskResponse {
     optional MessageEnvelope response_envelope = 3;
     optional string error = 4;
     optional string trace_id = 5;
+}
+
+message StreamMessage {
+    oneof message_type {
+        TellRequest tell_request = 1;
+        TellResponse tell_response = 2;
+        AskRequest ask_request = 3;
+        AskResponse ask_response = 4;
+        KeepAlive keep_alive = 5;
+    }
+    string stream_id = 6;
+}
+
+message KeepAlive {
+    int64 timestamp = 1;
 }
 
 message PingRequest {

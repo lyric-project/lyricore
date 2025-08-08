@@ -1,19 +1,19 @@
 #![feature(test)]
 extern crate test;
 
-use std::sync::Arc;
 use bytes::Bytes;
+use lyricore_store::{ObjectBuilder, ObjectId, ObjectStore, StoreConfig};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
-use lyricore_store::{ObjectStore, StoreConfig, ObjectBuilder, ObjectId};
 
 #[cfg(test)]
 mod deadlock_tests {
     use super::*;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
-    use tokio::time::timeout;
     use tokio::task::JoinSet;
+    use tokio::time::timeout;
 
     // Deadlock risk points analysis:
     // 1. cleanup_lru_objects()  Get write lock in cleanup_lru_objects() for a long time
@@ -64,9 +64,13 @@ mod deadlock_tests {
             while let Some(result) = tasks.join_next().await {
                 result.expect("Task should not panic");
             }
-        }).await;
+        })
+        .await;
 
-        assert!(test_result.is_ok(), "Timeout occurred, possible deadlock detected");
+        assert!(
+            test_result.is_ok(),
+            "Timeout occurred, possible deadlock detected"
+        );
     }
 
     /// Test deadlock risk during memory pressure handling
@@ -74,7 +78,7 @@ mod deadlock_tests {
     async fn test_memory_pressure_no_deadlock() {
         // Create a store with small memory limits to quickly trigger memory pressure
         let config = StoreConfig {
-            max_memory: 50 * 1024, // 50KB
+            max_memory: 50 * 1024,      // 50KB
             max_object_size: 10 * 1024, // 10KB
             memory_pressure_threshold: 0.5,
             track_access_time: true,
@@ -91,14 +95,15 @@ mod deadlock_tests {
                 tasks.spawn(async move {
                     for j in 0..10 {
                         let data = vec![i as u8; 8 * 1024]; // 8KB
-                        // It will trigger memory pressure handling
+                                                            // It will trigger memory pressure handling
                         let _ = store_clone.put(data).await;
 
                         if j % 3 == 0 {
                             let stats = store_clone.stats();
                             if stats.total_objects > 0 {
                                 for _ in 0..3 {
-                                    let test_id = ObjectId::from_str("1").unwrap_or(ObjectId::new());
+                                    let test_id =
+                                        ObjectId::from_str("1").unwrap_or(ObjectId::new());
                                     let _ = store_clone.get(test_id).await;
                                 }
                             }
@@ -111,9 +116,13 @@ mod deadlock_tests {
             while let Some(result) = tasks.join_next().await {
                 result.expect("Task should not panic");
             }
-        }).await;
+        })
+        .await;
 
-        assert!(test_result.is_ok(), "Timeout occurred, possible deadlock detected");
+        assert!(
+            test_result.is_ok(),
+            "Timeout occurred, possible deadlock detected"
+        );
     }
 
     /// Test deadlock risks of manual cleanup operations
@@ -165,9 +174,13 @@ mod deadlock_tests {
             while let Some(result) = tasks.join_next().await {
                 result.expect("Task should not panic");
             }
-        }).await;
+        })
+        .await;
 
-        assert!(test_result.is_ok(), "Cleanup operation test timeout, possible deadlock");
+        assert!(
+            test_result.is_ok(),
+            "Cleanup operation test timeout, possible deadlock"
+        );
     }
 
     /// Test deadlock risks of batch operations
@@ -210,9 +223,13 @@ mod deadlock_tests {
             while let Some(result) = tasks.join_next().await {
                 result.expect("Task should not panic");
             }
-        }).await;
+        })
+        .await;
 
-        assert!(test_result.is_ok(), "Batch operation test timeout, possible deadlock");
+        assert!(
+            test_result.is_ok(),
+            "Batch operation test timeout, possible deadlock"
+        );
     }
 
     /// Stress test: Deadlock detection under high concurrency
@@ -235,7 +252,7 @@ mod deadlock_tests {
                                 let data = vec![(i + j) as u8; 1024];
                                 let _ = store_clone.put(data).await;
                             }
-                        },
+                        }
                         1 => {
                             // Write then immediately read
                             for j in 0..15 {
@@ -244,7 +261,7 @@ mod deadlock_tests {
                                     let _ = store_clone.get(id).await;
                                 }
                             }
-                        },
+                        }
                         2 => {
                             // Mixed write, read, delete
                             for j in 0..10 {
@@ -256,7 +273,7 @@ mod deadlock_tests {
                                     }
                                 }
                             }
-                        },
+                        }
                         3 => {
                             // Statistics and check operations
                             for _ in 0..50 {
@@ -264,7 +281,7 @@ mod deadlock_tests {
                                 let test_id = ObjectId::new();
                                 let _ = store_clone.contains(test_id).await;
                             }
-                        },
+                        }
                         _ => unreachable!(),
                     }
                 });
@@ -274,9 +291,13 @@ mod deadlock_tests {
             while let Some(result) = tasks.join_next().await {
                 result.expect("Task should not panic");
             }
-        }).await;
+        })
+        .await;
 
-        assert!(test_result.is_ok(), "High concurrency stress test timeout, possible deadlock");
+        assert!(
+            test_result.is_ok(),
+            "High concurrency stress test timeout, possible deadlock"
+        );
     }
 
     /// Test lock contention detection
@@ -321,8 +342,11 @@ mod deadlock_tests {
         println!("  Total operations: {}", durations.len());
 
         // If maximum execution time exceeds 100ms, there may be severe lock contention
-        assert!(max_duration.as_millis() < 100,
-                "Severe lock contention detected, maximum execution time: {:?}", max_duration);
+        assert!(
+            max_duration.as_millis() < 100,
+            "Severe lock contention detected, maximum execution time: {:?}",
+            max_duration
+        );
     }
 
     /// Helper function: Run test with deadlock detection timeout
@@ -385,12 +409,13 @@ mod deadlock_aware_benches {
                             let test_id = ObjectId::new();
                             let result = store_clone.get(test_id).await;
                             // Handle the result if needed, or just let it drop
-                            result.map(|r|r.id())
+                            result.map(|r| r.id())
                         });
                     }
 
                     while let Some(_) = tasks.join_next().await {}
-                }).await;
+                })
+                .await;
 
                 assert!(result.is_ok(), "Deadlock detected in benchmark test");
             });

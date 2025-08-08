@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 import pytest
 import pytest_asyncio
 
-from lyricore_py.py_actor import ActorSystem
+from lyricore.py_actor import ActorSystem
 
 
 @asynccontextmanager

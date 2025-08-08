@@ -30,8 +30,3 @@ mmap = ["memmap2"]
 # [[bench]]
 # name = "deadlock_bench"
 # harness = false
-
-[profile.release]
-lto = true
-codegen-units = 1
-panic = "abort"

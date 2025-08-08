@@ -1,4 +1,4 @@
-use futures::stream::{StreamExt, FuturesUnordered};
+use futures::stream::{FuturesUnordered, StreamExt};
 use lyricore::{error, ActorContext, ActorPath, ActorSystem, Message, SchedulerConfig};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -44,11 +44,15 @@ impl lyricore::Actor for TestActor {
     }
 
     async fn on_stop(&mut self, ctx: &mut ActorContext) -> lyricore::error::Result<()> {
-        println!("TestActor stopped: {} (processed {} messages)", ctx.actor_id, self.count);
+        println!(
+            "TestActor stopped: {} (processed {} messages)",
+            ctx.actor_id, self.count
+        );
         Ok(())
     }
 }
 
+#[derive(Clone)]
 struct PerformanceStats {
     total_messages: usize,
     total_duration: Duration,
@@ -116,15 +120,24 @@ impl PerformanceStats {
 
         println!("=== Performance Comparison ===");
         if qps_improvement > 0.0 {
-            println!("🚀 QPS Improvement: +{:.1}% vs {}", qps_improvement, other_name);
+            println!(
+                "🚀 QPS Improvement: +{:.1}% vs {}",
+                qps_improvement, other_name
+            );
         } else {
             println!("📉 QPS Change: {:.1}% vs {}", qps_improvement, other_name);
         }
 
         if latency_improvement > 0.0 {
-            println!("⚡ Latency Improvement: +{:.1}% vs {}", latency_improvement, other_name);
+            println!(
+                "⚡ Latency Improvement: +{:.1}% vs {}",
+                latency_improvement, other_name
+            );
         } else {
-            println!("🐌 Latency Change: {:.1}% vs {}", latency_improvement, other_name);
+            println!(
+                "🐌 Latency Change: {:.1}% vs {}",
+                latency_improvement, other_name
+            );
         }
         println!("==============================\n");
     }
@@ -149,8 +162,12 @@ async fn setup_cross_node_system() -> lyricore::error::Result<(ActorSystem, Acto
     system2.start_server().await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    system1.connect_to_node("node2".to_string(), "127.0.0.1:50052".to_string()).await?;
-    system2.connect_to_node("node1".to_string(), "127.0.0.1:50051".to_string()).await?;
+    system1
+        .connect_to_node("node2".to_string(), "127.0.0.1:50052".to_string())
+        .await?;
+    system2
+        .connect_to_node("node1".to_string(), "127.0.0.1:50051".to_string())
+        .await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     Ok((system1, system2))
@@ -173,9 +190,9 @@ async fn run_cross_node_optimal_streaming(
         system1.spawn_at(&format!("actor_{}", i), TestActor { count: 0 });
 
         // Get remote actor reference from node2
-        let remote_path = ActorPath::try_from(format!(
-            "lyricore://node1@127.0.0.1:50051/user/actor_{}", i
-        )).unwrap();
+        let remote_path =
+            ActorPath::try_from(format!("lyricore://node1@127.0.0.1:50051/user/actor_{}", i))
+                .unwrap();
 
         if let Ok(remote_actor) = system2.actor_of_path(&remote_path).await {
             actors.push(remote_actor);
@@ -202,13 +219,19 @@ async fn run_cross_node_optimal_streaming(
             let task = async move {
                 let req_start = Instant::now();
                 let result = if wait_reply {
-                    actor_ref.ask(TestMessage {
-                        content: format!("msg_{}", msg_idx),
-                    }).await.is_ok()
+                    actor_ref
+                        .ask(TestMessage {
+                            content: format!("msg_{}", msg_idx),
+                        })
+                        .await
+                        .is_ok()
                 } else {
-                    actor_ref.tell(TestMessage {
-                        content: format!("msg_{}", msg_idx),
-                    }).await.is_ok()
+                    actor_ref
+                        .tell(TestMessage {
+                            content: format!("msg_{}", msg_idx),
+                        })
+                        .await
+                        .is_ok()
                 };
                 (req_start.elapsed(), result)
             };
@@ -278,13 +301,19 @@ async fn run_single_node_optimal_streaming(
             let task = async move {
                 let req_start = Instant::now();
                 let result = if wait_reply {
-                    actor_ref.ask(TestMessage {
-                        content: format!("msg_{}", msg_idx),
-                    }).await.is_ok()
+                    actor_ref
+                        .ask(TestMessage {
+                            content: format!("msg_{}", msg_idx),
+                        })
+                        .await
+                        .is_ok()
                 } else {
-                    actor_ref.tell(TestMessage {
-                        content: format!("msg_{}", msg_idx),
-                    }).await.is_ok()
+                    actor_ref
+                        .tell(TestMessage {
+                            content: format!("msg_{}", msg_idx),
+                        })
+                        .await
+                        .is_ok()
                 };
                 (req_start.elapsed(), result)
             };
@@ -335,8 +364,10 @@ async fn run_cross_node_high_concurrency(
         system1.spawn_at(&format!("high_conc_actor_{}", i), TestActor { count: 0 });
 
         let remote_path = ActorPath::try_from(format!(
-            "lyricore://node1@127.0.0.1:50051/user/high_conc_actor_{}", i
-        )).unwrap();
+            "lyricore://node1@127.0.0.1:50051/user/high_conc_actor_{}",
+            i
+        ))
+        .unwrap();
 
         if let Ok(remote_actor) = system2.actor_of_path(&remote_path).await {
             actors.push(remote_actor);
@@ -361,13 +392,19 @@ async fn run_cross_node_high_concurrency(
             let task = async move {
                 let req_start = Instant::now();
                 let result = if wait_reply {
-                    actor_ref.ask(TestMessage {
-                        content: format!("msg_{}", msg_idx),
-                    }).await.is_ok()
+                    actor_ref
+                        .ask(TestMessage {
+                            content: format!("msg_{}", msg_idx),
+                        })
+                        .await
+                        .is_ok()
                 } else {
-                    actor_ref.tell(TestMessage {
-                        content: format!("msg_{}", msg_idx),
-                    }).await.is_ok()
+                    actor_ref
+                        .tell(TestMessage {
+                            content: format!("msg_{}", msg_idx),
+                        })
+                        .await
+                        .is_ok()
                 };
                 (req_start.elapsed(), result)
             };
@@ -408,6 +445,10 @@ async fn main() -> lyricore::error::Result<()> {
     println!("3. 🚀 Cross-Node High Concurrency");
     println!();
 
+    // 4w QPS
+    // let actor_count = 50;
+    // let messages_per_actor = 20000; // 100K total messages
+
     let actor_count = 50;
     let messages_per_actor = 20000; // 100K total messages
     let concurrency_limit = 1000;
@@ -426,8 +467,9 @@ async fn main() -> lyricore::error::Result<()> {
         actor_count,
         messages_per_actor,
         concurrency_limit,
-        wait_reply
-    ).await?;
+        wait_reply,
+    )
+    .await?;
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
@@ -436,29 +478,39 @@ async fn main() -> lyricore::error::Result<()> {
         actor_count,
         messages_per_actor,
         concurrency_limit,
-        wait_reply
-    ).await?;
+        wait_reply,
+    )
+    .await?;
     cross_node_stats.compare_with(&single_node_stats, "SINGLE-NODE");
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
+    // let cross_node_stats = single_node_stats.clone(); // Placeholder to allow compilation
     // 3. Cross-node high concurrency test
     let high_conc_stats = run_cross_node_high_concurrency(
         actor_count,
         messages_per_actor,
         high_concurrency_limit,
-        wait_reply
-    ).await?;
+        wait_reply,
+    )
+    .await?;
     high_conc_stats.compare_with(&cross_node_stats, "CROSS-NODE OPTIMAL");
 
     println!("🏆 Final Performance Summary:");
-    println!("Single-Node:       {:.2} QPS, {:.2}ms latency",
-             single_node_stats.qps, single_node_stats.avg_latency_ms);
-    println!("Cross-Node:        {:.2} QPS, {:.2}ms latency ({:.1}x overhead)",
-             cross_node_stats.qps, cross_node_stats.avg_latency_ms,
-             single_node_stats.qps / cross_node_stats.qps);
-    println!("High Concurrency:  {:.2} QPS, {:.2}ms latency",
-             high_conc_stats.qps, high_conc_stats.avg_latency_ms);
+    println!(
+        "Single-Node:       {:.2} QPS, {:.2}ms latency",
+        single_node_stats.qps, single_node_stats.avg_latency_ms
+    );
+    println!(
+        "Cross-Node:        {:.2} QPS, {:.2}ms latency ({:.1}x overhead)",
+        cross_node_stats.qps,
+        cross_node_stats.avg_latency_ms,
+        single_node_stats.qps / cross_node_stats.qps
+    );
+    println!(
+        "High Concurrency:  {:.2} QPS, {:.2}ms latency",
+        high_conc_stats.qps, high_conc_stats.avg_latency_ms
+    );
 
     println!("\n💡 Key Insights:");
     println!("• Cross-node adds network overhead but maintains algorithm efficiency");
@@ -470,8 +522,10 @@ async fn main() -> lyricore::error::Result<()> {
     let network_overhead_factor = single_node_stats.qps / cross_node_stats.qps;
     println!("\n🌐 Network Analysis:");
     println!("• Network overhead factor: {:.2}x", network_overhead_factor);
-    println!("• Cross-node latency increase: {:.1}x",
-             cross_node_stats.avg_latency_ms / single_node_stats.avg_latency_ms);
+    println!(
+        "• Cross-node latency increase: {:.1}x",
+        cross_node_stats.avg_latency_ms / single_node_stats.avg_latency_ms
+    );
 
     if network_overhead_factor < 2.0 {
         println!("✅ Excellent cross-node performance!");

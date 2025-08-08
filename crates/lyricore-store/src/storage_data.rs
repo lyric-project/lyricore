@@ -1,6 +1,6 @@
+use super::fast_ops::{ExternalDataKeeper, LifetimeKeeper};
 use bytes::Bytes;
 use std::sync::Arc;
-use super::fast_ops::{LifetimeKeeper, ExternalDataKeeper};
 
 /// The data storage type, which can be:
 #[derive(Debug)]
@@ -17,7 +17,7 @@ pub enum StorageData {
     /// Memory-mapped storage, which can also be zero-copy
     #[cfg(feature = "mmap")]
     MemoryMapped {
-        _mmap: Arc<memmap2::Mmap>,  // Use storage type for memory-mapped data, // which can be zero-copy
+        _mmap: Arc<memmap2::Mmap>, // Use storage type for memory-mapped data, // which can be zero-copy
     },
 }
 
@@ -39,7 +39,7 @@ impl StorageData {
             StorageData::Shared(arc) => arc,
             StorageData::ExternalRef { data, .. } => data,
             #[cfg(feature = "mmap")]
-            StorageData::MemoryMapped { _mmap } => &_mmap[..],  // 直接从 mmap 获取数据
+            StorageData::MemoryMapped { _mmap } => &_mmap[..], // 直接从 mmap 获取数据
         }
     }
 

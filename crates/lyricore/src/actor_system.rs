@@ -1,23 +1,24 @@
-use crate::actor_ref::{ActorRef, LocalActorRef, RemoteActorRef};
-use crate::error::Result;
+use crate::actor_ref::{ActorRef, LocalActorRef, RemoteActorRef, StreamingRemoteActorRef};
 use crate::error::LyricoreActorError;
+use crate::error::Result;
 use crate::message::InboxMessage;
 use crate::path::{ActorAddress, ActorPath};
 use crate::rpc::actor_service;
 use crate::rpc::actor_service::actor_service_client::ActorServiceClient;
-use crate::rpc::actor_service::actor_service_server::{ActorService, ActorServiceServer};
+use crate::rpc::actor_service::actor_service_server::ActorServiceServer;
+use crate::rpc_actor_service::ActorServiceImpl;
 use crate::scheduler::{
     SchedulerCommand, SchedulerConfig, SchedulerJobRequest, WorkItem, WorkScheduler,
 };
-use crate::serialization::{MessageEnvelope, MessageRegistry, SerFormat, SerializationStrategy};
+use crate::serialization::{MessageRegistry, SerFormat, SerializationStrategy};
+use crate::stream::{StreamConfig, StreamConnectionManager};
 use crate::{Actor, ActorId, Message};
 use dashmap::DashMap;
-use serde::Serialize;
 use std::str::FromStr;
 use std::sync::Arc;
+use tokio::net::lookup_host;
 use tokio::sync::{mpsc, oneshot};
 use tonic::transport::Server;
-use tonic::{Request, Response, Status};
 
 /// NodeRegistry manages the registration and information of remote nodes in the actor system.
 #[derive(Clone, Debug)]
@@ -73,7 +74,6 @@ impl NodeRegistry {
     }
 }
 
-
 #[derive(Debug)]
 pub(crate) struct ActorSystemInner {
     pub(crate) message_registry: Arc<MessageRegistry>,
@@ -86,8 +86,9 @@ pub(crate) struct ActorSystemInner {
     scheduler_cmd_sender: mpsc::UnboundedSender<SchedulerCommand>,
 
     pub(crate) local_actors: Arc<DashMap<ActorId, LocalActorRef>>,
-    pub(crate) path_to_runtime: Arc<DashMap<String, ActorId>>,     // full_path -> runtime_id
-    pub(crate) remote_actors: Arc<DashMap<String, RemoteActorRef>>, // full_path -> remote_ref
+    pub(crate) path_to_runtime: Arc<DashMap<String, ActorId>>, // full_path -> runtime_id
+    pub(crate) remote_actors: Arc<DashMap<String, StreamingRemoteActorRef>>, // full_path -> remote_ref
+    stream_manager: Arc<StreamConnectionManager>,
 }
 
 pub struct ActorSystem {
@@ -119,13 +120,20 @@ impl ActorSystemInner {
                 // Create new remote actor reference
                 let actor_id = ActorId::generate(path.clone());
                 let remote_ref = RemoteActorRef::new(
-                    actor_id,
+                    actor_id.clone(),
                     Arc::clone(&self.node_registry),
                     Arc::clone(&self.message_registry),
                 );
+                let stream_remote_ref = StreamingRemoteActorRef::new(
+                    actor_id,
+                    Arc::clone(&self.stream_manager),
+                    Arc::clone(&self.message_registry),
+                    Some(remote_ref),
+                );
 
-                self.remote_actors.insert(full_path, remote_ref.clone());
-                Ok(ActorRef::Remote(remote_ref))
+                self.remote_actors
+                    .insert(full_path, stream_remote_ref.clone());
+                Ok(ActorRef::Remote(stream_remote_ref))
             }
         }
     }
@@ -251,7 +259,8 @@ impl ActorSystem {
         serialization_strategy: Option<SerializationStrategy>,
     ) -> Result<Self> {
         let address = ActorAddress::from_str(&listen_address)?;
-        Self::new_internal(system_name, address, config, serialization_strategy)
+        // TODO: Pass stream configuration if needed
+        Self::new_internal(system_name, address, config, None, serialization_strategy)
     }
 
     pub fn new_optimized_with_name(
@@ -280,6 +289,7 @@ impl ActorSystem {
         system_name: String,
         system_address: ActorAddress,
         config: SchedulerConfig,
+        stream_config: Option<StreamConfig>,
         serialization_strategy: Option<SerializationStrategy>,
     ) -> Result<Self> {
         let (scheduler_cmd_tx, scheduler_cmd_rx) = mpsc::unbounded_channel();
@@ -287,6 +297,9 @@ impl ActorSystem {
         let node_registry = Arc::new(NodeRegistry::new());
         let strategy = serialization_strategy.unwrap_or_default();
         let message_registry = Arc::new(MessageRegistry::new(strategy));
+        let stream_manager = Arc::new(StreamConnectionManager::new(
+            stream_config.unwrap_or_default(),
+        ));
 
         let inner = Arc::new(ActorSystemInner {
             system_name,
@@ -298,6 +311,7 @@ impl ActorSystem {
             local_actors: Arc::new(DashMap::new()),
             path_to_runtime: Arc::new(DashMap::new()),
             remote_actors: Arc::new(DashMap::new()),
+            stream_manager,
         });
 
         let scheduler = WorkScheduler::new(
@@ -319,28 +333,36 @@ impl ActorSystem {
         Ok(system)
     }
 
-    // 新增：注册消息类型
     /// Registers a message type with the actor system.
-    pub fn register_message_type<T: Message>(&mut self, preferred_format: Option<SerFormat>) {
+    pub fn register_message_type<T: Message>(&mut self, _preferred_format: Option<SerFormat>) {
         todo!()
     }
 
     pub async fn start_server(&mut self) -> Result<()> {
-        let addr = format!(
+        let addr_str = format!(
             "{}:{}",
             self.inner.system_address.host, self.inner.system_address.port
-        )
-        .parse::<std::net::SocketAddr>()
-        .map_err(|e| {
+        );
+        let mut addrs = lookup_host(&addr_str).await.map_err(|e| {
             LyricoreActorError::Actor(crate::error::ActorError::RpcError(format!(
-                "Invalid address: {}",
+                "DNS resolution failed: {}",
                 e
             )))
         })?;
 
+        let addr = addrs.next().ok_or_else(|| {
+            LyricoreActorError::Actor(crate::error::ActorError::RpcError(
+                "No valid address found".to_string(),
+            ))
+        })?;
+
+        let concurrency_limit = 2000;
+        let ask_timeout = std::time::Duration::from_secs(30);
         let service = ActorServiceImpl::new(
             self.inner.job_sender.clone(),
             Arc::clone(&self.inner.message_registry),
+            concurrency_limit,
+            ask_timeout,
         );
         let (tx_rpc_ready, _) = oneshot::channel();
         let (tx, rx) = oneshot::channel();
@@ -396,9 +418,14 @@ impl ActorSystem {
 
     // Connects to a remote node by its ID and address.
     pub async fn connect_to_node(&self, node_id: String, address: String) -> Result<()> {
-        self.inner
+        let _ = self
+            .inner
             .node_registry
-            .register_node(node_id, address)
+            .register_node(node_id.clone(), address.clone())
+            .await;
+        self.inner
+            .stream_manager
+            .connect_to_node(node_id.clone(), address.clone())
             .await
     }
 
@@ -481,179 +508,6 @@ impl ActorSystem {
         }
 
         Ok(())
-    }
-}
-
-pub struct ActorServiceImpl {
-    job_sender: mpsc::UnboundedSender<SchedulerJobRequest>,
-    message_registry: Arc<MessageRegistry>,
-    node_capabilities: actor_service::NodeCapabilities,
-}
-
-impl ActorServiceImpl {
-    pub fn new(
-        job_sender: mpsc::UnboundedSender<SchedulerJobRequest>,
-        message_registry: Arc<MessageRegistry>,
-    ) -> Self {
-        // Create default node capabilities
-        let node_capabilities = actor_service::NodeCapabilities {
-            supported_formats: vec![SerFormat::Json as i32, SerFormat::Messagepack as i32],
-            supports_streaming: false,
-            supports_compression: false,
-            compression_algorithms: vec![],
-        };
-
-        Self {
-            job_sender,
-            message_registry,
-            node_capabilities,
-        }
-    }
-
-    async fn schedule_remote_envelope_rpc_message(
-        &self,
-        actor_id: ActorId,
-        envelope: MessageEnvelope,
-        addr: ActorAddress,
-    ) -> Result<MessageEnvelope> {
-        let (response_tx, response_rx) = oneshot::channel();
-
-        let message = Box::new(InboxMessage::rpc_envelope_message(
-            addr,
-            envelope,
-            response_tx,
-        ));
-
-        let work_item = WorkItem::new(actor_id, message);
-        let _ = self.job_sender.send(SchedulerJobRequest::SubmitWork {
-            work_item,
-            remote: true,
-        });
-
-        match tokio::time::timeout(tokio::time::Duration::from_secs(30), response_rx).await {
-            Ok(result) => match result {
-                Ok(response) => response,
-                Err(_) => Err(LyricoreActorError::Actor(crate::error::ActorError::RpcError(
-                    "Response channel error".to_string(),
-                ))),
-            },
-            Err(_) => Err(LyricoreActorError::Actor(crate::error::ActorError::RpcError(
-                "Request timeout".to_string(),
-            ))),
-        }
-    }
-}
-#[tonic::async_trait]
-impl ActorService for ActorServiceImpl {
-    async fn tell(
-        &self,
-        request: Request<actor_service::TellRequest>,
-    ) -> std::result::Result<Response<actor_service::TellResponse>, Status> {
-        let addr = request
-            .remote_addr()
-            .ok_or_else(|| Status::internal("Missing remote address"))?;
-        let req = request.into_inner();
-
-        if let Some(proto_envelope) = req.envelope {
-            let envelope: MessageEnvelope = proto_envelope
-                .try_into()
-                .map_err(|e| Status::invalid_argument(format!("Invalid envelope: {}", e)))?;
-            let addr = ActorAddress::new(addr.ip().to_string(), addr.port());
-            let actor_path = ActorPath::parse(req.actor_id.as_str())
-                .map_err(|e| Status::invalid_argument(format!("Invalid actor path: {}", e)))?;
-            let actor_id = ActorId::new("".to_string(), actor_path);
-            let message = Box::new(InboxMessage::envelope_message(addr, envelope));
-            let work_item = WorkItem::new(actor_id, message);
-            let _ = self.job_sender.send(SchedulerJobRequest::SubmitWork {
-                work_item,
-                remote: true,
-            });
-
-            Ok(Response::new(actor_service::TellResponse {
-                success: true,
-                error: None,
-                trace_id: req.trace_id,
-            }))
-        } else {
-            Err(Status::invalid_argument("Missing message envelope"))
-        }
-    }
-
-    async fn ask(
-        &self,
-        request: Request<actor_service::AskRequest>,
-    ) -> std::result::Result<Response<actor_service::AskResponse>, Status> {
-        let addr = request
-            .remote_addr()
-            .ok_or_else(|| Status::internal("Missing remote address"))?;
-        let req = request.into_inner();
-
-        if let Some(proto_envelope) = req.envelope {
-            let envelope: MessageEnvelope = proto_envelope
-                .try_into()
-                .map_err(|e| Status::invalid_argument(format!("Invalid envelope: {}", e)))?;
-
-            let addr = ActorAddress::new(addr.ip().to_string(), addr.port());
-            let actor_path = ActorPath::parse(req.actor_id.as_str())
-                .map_err(|e| Status::invalid_argument(format!("Invalid actor path: {}", e)))?;
-            tracing::debug!(
-                "Scheduling ask for actor: {}, actor_path: {:?}",
-                req.actor_id,
-                actor_path.full_path()
-            );
-            let actor_id = ActorId::new("".to_string(), actor_path);
-            let response_result = self
-                .schedule_remote_envelope_rpc_message(actor_id, envelope, addr)
-                .await;
-            match response_result {
-                Ok(response_envelope) => Ok(Response::new(actor_service::AskResponse {
-                    correlation_id: req.correlation_id,
-                    success: true,
-                    response_envelope: Some(response_envelope.into()),
-                    error: None,
-                    trace_id: req.trace_id,
-                })),
-                Err(e) => Ok(Response::new(actor_service::AskResponse {
-                    correlation_id: req.correlation_id,
-                    success: false,
-                    response_envelope: None,
-                    error: Some(e.to_string()),
-                    trace_id: req.trace_id,
-                })),
-            }
-        } else {
-            Err(Status::invalid_argument("Missing message envelope"))
-        }
-    }
-
-    async fn ping(
-        &self,
-        request: Request<actor_service::PingRequest>,
-    ) -> std::result::Result<Response<actor_service::PingResponse>, Status> {
-        let _req = request.into_inner();
-
-        Ok(Response::new(actor_service::PingResponse {
-            node_id: "current_node".to_string(),
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64,
-            capabilities: Some(self.node_capabilities.clone()),
-        }))
-    }
-
-    async fn get_node_info(
-        &self,
-        request: Request<actor_service::NodeInfoRequest>,
-    ) -> std::result::Result<Response<actor_service::NodeInfoResponse>, Status> {
-        let _req = request.into_inner();
-
-        Ok(Response::new(actor_service::NodeInfoResponse {
-            node_id: "current_node".to_string(),
-            version: "1.0.0".to_string(),
-            capabilities: Some(self.node_capabilities.clone()),
-            supported_message_types: vec![],
-        }))
     }
 }
 

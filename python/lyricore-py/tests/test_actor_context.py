@@ -2,8 +2,8 @@ from typing import Any, Dict, List
 
 import pytest
 
-from lyricore_py import ActorContext, ActorSystem
-from lyricore_py.tests.conftest import actor_system
+from lyricore import ActorContext, ActorSystem
+from lyricore.tests.conftest import actor_system
 
 
 @pytest.mark.asyncio
@@ -69,7 +69,7 @@ async def test_map_reduce_word_count(actor_system: ActorSystem):
             self.mapper_id = mapper_id
 
         async def handle_message(
-                self, message: Any, ctx: ActorContext
+            self, message: Any, ctx: ActorContext
         ) -> Dict[str, int]:
             if isinstance(message, dict) and message.get("action") == "map":
                 text = message.get("text", "")

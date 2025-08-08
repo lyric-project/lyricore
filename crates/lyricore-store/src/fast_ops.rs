@@ -14,7 +14,7 @@ pub struct FastMemOps;
 
 impl FastMemOps {
     /// High-performance memory copy
-    /// 
+    ///
     /// # Safety
     /// When using FastCopyMode::Unsafe, the caller must ensure:
     /// 1. src pointer is valid and readable
@@ -22,27 +22,28 @@ impl FastMemOps {
     /// 3. memory does not overlap
     pub unsafe fn fast_copy(src: *const u8, len: usize, mode: FastCopyMode) -> Vec<u8> {
         let mut dst = Vec::with_capacity(len);
-        
+
         match mode {
             FastCopyMode::Auto => {
-                if len > 1024 * 1024 {  // 1MB+ use Unsafe
+                if len > 1024 * 1024 {
+                    // 1MB+ use Unsafe
                     std::ptr::copy_nonoverlapping(src, dst.as_mut_ptr(), len);
                     dst.set_len(len);
                 } else {
                     let slice = std::slice::from_raw_parts(src, len);
                     dst.extend_from_slice(slice);
                 }
-            },
+            }
             FastCopyMode::Unsafe => {
                 std::ptr::copy_nonoverlapping(src, dst.as_mut_ptr(), len);
                 dst.set_len(len);
-            },
+            }
             FastCopyMode::Standard => {
                 let slice = std::slice::from_raw_parts(src, len);
                 dst.extend_from_slice(slice);
-            },
+            }
         }
-        
+
         dst
     }
 
@@ -53,7 +54,13 @@ impl FastMemOps {
 
     /// Get recommended alignment size based on data size
     pub fn recommend_alignment(size: usize) -> usize {
-        if size >= 1024 * 1024 { 64 } else if size >= 1024 { 16 } else { 8 }
+        if size >= 1024 * 1024 {
+            64
+        } else if size >= 1024 {
+            16
+        } else {
+            8
+        }
     }
 }
 
@@ -70,7 +77,9 @@ pub struct ExternalDataKeeper {
 
 impl ExternalDataKeeper {
     pub fn new<T: 'static + Send + Sync>(data: T) -> Self {
-        Self { data: Box::new(data) }
+        Self {
+            data: Box::new(data),
+        }
     }
 }
 

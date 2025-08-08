@@ -102,6 +102,6 @@ dmypy.json
 .DS_Store
 logs
 
-/python/lyricore-py/python/lyricore_py/*.so
+/python/lyricore-py/python/lyricore/*.so
 /python/notebooks/
 python/extract_project_info.py

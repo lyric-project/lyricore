@@ -62,11 +62,8 @@ mod mmap_tests {
         let mmap = unsafe { Mmap::map(&file).expect("Failed to create mmap") };
         let mmap_arc = Arc::new(mmap);
 
-        let stored_obj = StoredObject::from_mmap(
-            ObjectId::new(),
-            mmap_arc.clone(),
-            ObjectMetadata::default()
-        );
+        let stored_obj =
+            StoredObject::from_mmap(ObjectId::new(), mmap_arc.clone(), ObjectMetadata::default());
 
         // Test zero-copy access
         let data_slice = stored_obj.data_slice();
@@ -75,7 +72,10 @@ mod mmap_tests {
         // Verify pointer addresses are identical (true zero-copy)
         let mmap_ptr = mmap_arc.as_ptr();
         let stored_ptr = data_slice.as_ptr();
-        assert_eq!(mmap_ptr, stored_ptr, "Pointers should be identical for zero-copy access");
+        assert_eq!(
+            mmap_ptr, stored_ptr,
+            "Pointers should be identical for zero-copy access"
+        );
 
         // Test multiple accesses
         let data_slice2 = stored_obj.data_slice();
@@ -131,7 +131,10 @@ mod mmap_tests {
         let store = ObjectStore::default();
 
         // Use ObjectStore's mmap functionality
-        let id = store.put_mmap_zero_copy(&file_path).await.expect("Failed to put mmap file");
+        let id = store
+            .put_mmap_zero_copy(&file_path)
+            .await
+            .expect("Failed to put mmap file");
 
         // Verify object exists
         assert!(store.contains(id).await);
@@ -153,7 +156,10 @@ mod mmap_tests {
         assert_eq!(stats.total_memory, test_data.len());
 
         // Get storage information
-        let storage_info = store.get_storage_info(id).await.expect("Failed to get storage info");
+        let storage_info = store
+            .get_storage_info(id)
+            .await
+            .expect("Failed to get storage info");
         assert_eq!(storage_info.storage_type, "memory_mapped");
         assert!(storage_info.is_zero_copy);
     }
@@ -164,18 +170,15 @@ mod mmap_tests {
         use memmap2::Mmap;
 
         // Create larger test file (1MB)
-        let large_data: Vec<u8> = (0..1024*1024).map(|i| (i % 256) as u8).collect();
+        let large_data: Vec<u8> = (0..1024 * 1024).map(|i| (i % 256) as u8).collect();
         let (_temp_dir, file_path) = create_test_file(&large_data);
 
         let file = File::open(&file_path).expect("Failed to open large test file");
         let mmap = unsafe { Mmap::map(&file).expect("Failed to create large mmap") };
         let mmap_arc = Arc::new(mmap);
 
-        let stored_obj = StoredObject::from_mmap(
-            ObjectId::new(),
-            mmap_arc,
-            ObjectMetadata::default()
-        );
+        let stored_obj =
+            StoredObject::from_mmap(ObjectId::new(), mmap_arc, ObjectMetadata::default());
 
         // Verify large file handling
         assert_eq!(stored_obj.size, large_data.len());
@@ -186,7 +189,7 @@ mod mmap_tests {
         assert_eq!(data_slice[0], 0);
         assert_eq!(data_slice[255], 255);
         assert_eq!(data_slice[256], 0);
-        assert_eq!(data_slice[1024*1024-1], ((1024*1024-1) % 256) as u8);
+        assert_eq!(data_slice[1024 * 1024 - 1], ((1024 * 1024 - 1) % 256) as u8);
     }
 
     #[cfg(feature = "mmap")]
@@ -212,7 +215,10 @@ mod mmap_tests {
                 ..Default::default()
             };
             let obj = StoredObject::from_mmap(ObjectId::new(), mmap_arc.clone(), metadata);
-            let id = store.put_object(obj).await.expect("Failed to put mmap object");
+            let id = store
+                .put_object(obj)
+                .await
+                .expect("Failed to put mmap object");
             ids.push(id);
         }
 
@@ -265,9 +271,13 @@ mod mmap_tests {
         let store = ObjectStore::default();
 
         // Create and store mmap object
-        let obj = StoredObject::from_mmap(ObjectId::new(), mmap_arc.clone(), ObjectMetadata::default());
+        let obj =
+            StoredObject::from_mmap(ObjectId::new(), mmap_arc.clone(), ObjectMetadata::default());
         let id = obj.id;
-        store.put_object(obj).await.expect("Failed to put mmap object");
+        store
+            .put_object(obj)
+            .await
+            .expect("Failed to put mmap object");
 
         // Verify reference count increased
         assert_eq!(Arc::strong_count(&mmap_arc), initial_refcount + 1);
@@ -320,9 +330,7 @@ mod mmap_tests {
         let mmap = unsafe { Mmap::map(&file).expect("Failed to create mmap") };
         let mmap_arc = Arc::new(mmap);
 
-        let storage_data = StorageData::MemoryMapped {
-            _mmap: mmap_arc,
-        };
+        let storage_data = StorageData::MemoryMapped { _mmap: mmap_arc };
 
         // Test StorageData methods
         assert_eq!(storage_data.len(), test_data.len());
@@ -351,11 +359,17 @@ mod mmap_tests {
         let store = ObjectStore::default();
 
         // Add standard object
-        let standard_id = store.put(vec![1, 2, 3, 4, 5]).await.expect("Failed to put standard object");
+        let standard_id = store
+            .put(vec![1, 2, 3, 4, 5])
+            .await
+            .expect("Failed to put standard object");
 
         // Add mmap object
         let obj = StoredObject::from_mmap(ObjectId::new(), mmap_arc, ObjectMetadata::default());
-        let mmap_id = store.put_object(obj).await.expect("Failed to put mmap object");
+        let mmap_id = store
+            .put_object(obj)
+            .await
+            .expect("Failed to put mmap object");
 
         // Get zero-copy statistics
         let zero_copy_stats = store.get_zero_copy_stats().await;
@@ -367,11 +381,17 @@ mod mmap_tests {
         assert_eq!(zero_copy_stats.zero_copy_ratio, 0.5);
 
         // Verify storage information
-        let mmap_info = store.get_storage_info(mmap_id).await.expect("Failed to get mmap storage info");
+        let mmap_info = store
+            .get_storage_info(mmap_id)
+            .await
+            .expect("Failed to get mmap storage info");
         assert_eq!(mmap_info.storage_type, "memory_mapped");
         assert!(mmap_info.is_zero_copy);
 
-        let standard_info = store.get_storage_info(standard_id).await.expect("Failed to get standard storage info");
+        let standard_info = store
+            .get_storage_info(standard_id)
+            .await
+            .expect("Failed to get standard storage info");
         assert_eq!(standard_info.storage_type, "standard");
         assert!(!standard_info.is_zero_copy);
     }
@@ -388,11 +408,8 @@ mod mmap_tests {
         let mmap = unsafe { Mmap::map(&file).expect("Failed to create mmap") };
         let mmap_arc = Arc::new(mmap);
 
-        let stored_obj = StoredObject::from_mmap(
-            ObjectId::new(),
-            mmap_arc,
-            ObjectMetadata::default()
-        );
+        let stored_obj =
+            StoredObject::from_mmap(ObjectId::new(), mmap_arc, ObjectMetadata::default());
 
         // Test Debug formatting
         let debug_output = format!("{:?}", stored_obj);

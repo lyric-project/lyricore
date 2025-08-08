@@ -29,7 +29,6 @@ impl TokioRuntime {
         self.runtime.handle().clone()
     }
 
-
     pub fn strong_count(&self) -> usize {
         Arc::strong_count(&self.runtime)
     }

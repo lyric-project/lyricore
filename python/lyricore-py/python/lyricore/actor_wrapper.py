@@ -2,6 +2,7 @@ import base64
 import functools
 import hashlib
 import logging
+import traceback
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Type, TypeVar
 
@@ -18,8 +19,13 @@ except ImportError:
 
     np = DummyNumpy()
 from . import pickle
-from ._lyricore_py import PyActorContext, PyObjectStore, PyStoreConfig
-from .object_store import get_global_object_store
+from ._lyricore import PyActorContext, PyObjectStore, PyStoreConfig
+from .error import ActorNoRouteError
+from .object_store import (
+    ActorMessageContextVar,
+    get_global_object_store,
+    set_global_inner_context,
+)
 from .py_actor import ActorContext
 from .router import _has_message_handlers, _setup_message_routing
 from .utils import get_sizeof
@@ -221,6 +227,12 @@ def _wrap_core_method(
     @functools.wraps(original_method)
     async def core_wrapper(*args, **kwargs):
         # For methods like on_message and handle_message, we need to handle the message parameter specially
+        actor_ctx: Optional[ActorContext] = None
+        for arg in args:
+            if isinstance(arg, PyActorContext):
+                actor_ctx = ActorContext(arg, config)
+                set_global_inner_context(arg.get_inner_ctx())
+
         if method_name in ["on_message", "handle_message"] and args:
             # The first argument is the message, which needs to be deserialized
             message_bytes = args[0]
@@ -249,7 +261,9 @@ def _wrap_core_method(
         )
 
         # To invoke the original method with deserialized arguments
-        result = await original_method(*deserialized_args, **deserialized_kwargs)
+        with ActorMessageContextVar(actor_ctx):
+            result = await original_method(*deserialized_args, **deserialized_kwargs)
+
         if result is not None and method_name == "handle_message":
             # Try to serialize the result if needed
             final_result = await _serialize_result_if_needed(result, store, serializer)
@@ -273,6 +287,13 @@ def _wrap_core_method_with_routing(
     @functools.wraps(original_method)
     async def core_wrapper(*args, **kwargs):
         # Deserialize the message if it's a message handler
+        # Set context store
+        actor_ctx: Optional[ActorContext] = None
+
+        for arg in args:
+            if isinstance(arg, PyActorContext):
+                actor_ctx = ActorContext(arg, config)
+                set_global_inner_context(arg.get_inner_ctx())
         if method_name in ["on_message", "handle_message"] and args:
             message_bytes = args[0]
             if isinstance(message_bytes, bytes):
@@ -289,7 +310,7 @@ def _wrap_core_method_with_routing(
 
         def _arg_func(arg):
             if isinstance(arg, PyActorContext):
-                return ActorContext(arg, config)
+                return actor_ctx
             return arg
 
         # Deserialize args and kwargs
@@ -309,7 +330,8 @@ def _wrap_core_method_with_routing(
 
             try:
                 # Try routing the message, raise an exception if routing fails
-                result = await self.__message_router__.route(message, ctx)
+                with ActorMessageContextVar(actor_ctx):
+                    result = await self.__message_router__.route(message, ctx)
 
                 if result is not None:
                     # Deserialize the result if needed when routing is successful and method is handle_message
@@ -322,12 +344,18 @@ def _wrap_core_method_with_routing(
                     # The result is None, which means the message was sent to handle
                     # and the routing was successful, just return None
                     return None
-            except Exception:
+            except ActorNoRouteError:
                 # Just log the error and continue to invoke the original method
                 logger.debug("No routing handler found for message, ")
+            except Exception as e:
+                msg_err = traceback.format_exc()
+                logger.error(f"Error during message routing: {msg_err}")
+                raise e from e
 
         # Invoke the original method with deserialized arguments if no routing was done
-        result = await original_method(*deserialized_args, **deserialized_kwargs)
+
+        with ActorMessageContextVar(actor_ctx):
+            result = await original_method(*deserialized_args, **deserialized_kwargs)
 
         # Serialize the result if needed
         if result is not None and method_name == "handle_message":
@@ -412,7 +440,7 @@ class ObjectStoreRef:
 
 class MessageSerializer:
     def __init__(self, store, config: ObjectStoreConfig):
-        self.store = store  # PyObjectStore 实例
+        self.store = store  # PyObjectStore Instance
         self.config = config
 
     async def serialize_args(self, args: tuple, kwargs: dict) -> tuple[tuple, dict]:
@@ -548,6 +576,21 @@ class ObjectStoreActorRef:
         self.config = config or ObjectStoreConfig()
         self.serializer = MessageSerializer(store, self.config)
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        # Remove the executor as it's not serializable
+        state.pop("store", None)
+        state.pop("serializer", None)
+        return state
+
+    def __setstate__(self, state):
+        from . import get_global_object_store
+
+        self.__dict__.update(state)
+        # Recreate the executor
+        self.store = get_global_object_store()
+        self.serializer = MessageSerializer(self.store, self.config)
+
     async def tell(self, message: Any) -> None:
         """Send a message to the actor (enhanced, supports automatic serialization)"""
         serialized_message = await self._serialize_message(message)
@@ -562,7 +605,9 @@ class ObjectStoreActorRef:
         result_bytes = await self.ref.ask(serialized_message_bytes, timeout)
         # Deserialize the response bytes
         if result_bytes is None:
+            logger.debug("Received None response from actor.")
             return None
+        logger.debug(f"Received response bytes: {result_bytes[:100]}... (truncated)")
         result = pickle.loads(result_bytes)
         return await self._deserialize_response(result)
 

@@ -1,8 +1,8 @@
-use lyricore::serialization::{SerializationStrategy};
+use futures::stream::{FuturesUnordered, StreamExt};
+use lyricore::serialization::SerializationStrategy;
 use lyricore::{ActorContext, Message, SchedulerConfig};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
-use futures::stream::{StreamExt, FuturesUnordered};
 
 struct TestActor {
     count: usize,
@@ -60,15 +60,23 @@ struct PerformanceStats {
 }
 
 impl PerformanceStats {
-    fn new(total_messages: usize, total_duration: Duration, latencies: &mut [Duration]) -> Self {
+    fn new(
+        total_messages: usize,
+        total_successful: usize,
+        total_duration: Duration,
+        latencies: &mut [Duration],
+    ) -> Self {
         latencies.sort();
 
-        let qps = total_messages as f64 / total_duration.as_secs_f64();
+        let qps = total_successful as f64 / total_duration.as_secs_f64();
         let avg_latency_ms = latencies
             .iter()
             .map(|d| d.as_secs_f64() * 1000.0)
             .sum::<f64>()
             / latencies.len() as f64;
+
+        let success_rate = total_successful as f64 / total_messages as f64 * 100.0;
+        println!("✅ Success Rate: {:.2}%", success_rate);
 
         let p95_index = (latencies.len() as f64 * 0.95) as usize;
         let p99_index = (latencies.len() as f64 * 0.99) as usize;
@@ -145,13 +153,23 @@ async fn run_optimal_streaming(
             let task = async move {
                 let req_start = Instant::now();
                 let result = if wait_reply {
-                    actor_ref.ask(TestMessage {
-                        content: format!("msg_{}", msg_idx),
-                    }).await.is_ok()
+                    actor_ref
+                        .ask(TestMessage {
+                            content: format!("msg_{}", msg_idx),
+                        })
+                        .await
+                        .map_err(|e| {
+                            eprintln!("Error: {:?}", e);
+                            e
+                        })
+                        .is_ok()
                 } else {
-                    actor_ref.tell(TestMessage {
-                        content: format!("msg_{}", msg_idx),
-                    }).await.is_ok()
+                    actor_ref
+                        .tell(TestMessage {
+                            content: format!("msg_{}", msg_idx),
+                        })
+                        .await
+                        .is_ok()
                 };
                 (req_start.elapsed(), result)
             };
@@ -170,6 +188,8 @@ async fn run_optimal_streaming(
         }
     }
 
+    let total_messages = actor_count * messages_per_actor;
+
     // Handle remaining futures
     while let Some((latency, is_success)) = futures.next().await {
         latencies.push(latency);
@@ -179,12 +199,16 @@ async fn run_optimal_streaming(
     }
 
     let total_duration = test_start.elapsed();
-    let stats = PerformanceStats::new(total_successful, total_duration, &mut latencies);
+    let stats = PerformanceStats::new(
+        total_messages,
+        total_successful,
+        total_duration,
+        &mut latencies,
+    );
     stats.print_analysis("OPTIMAL STREAMING");
 
     Ok(stats)
 }
-
 
 #[tokio::main]
 async fn main() -> lyricore::error::Result<()> {
@@ -204,18 +228,13 @@ async fn main() -> lyricore::error::Result<()> {
     println!("• No synchronization overhead");
     println!();
 
-    let actor_count = 5000000;
+    let actor_count = 500_000; // 500K actors for optimal streaming
     let messages_per_actor = 10; // 1M total for faster testing
-    let wait_reply = false;
+    let wait_reply = true;
 
     println!("🧪 Demonstrating the principles:");
 
-    run_optimal_streaming(
-        actor_count,
-        messages_per_actor,
-        1000,
-        wait_reply
-    ).await?;
+    run_optimal_streaming(actor_count, messages_per_actor, 1000, wait_reply).await?;
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 

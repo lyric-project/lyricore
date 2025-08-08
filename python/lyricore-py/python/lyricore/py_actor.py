@@ -8,12 +8,19 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, Optional, Type
 
+from .error import (
+    ActorError,
+    ActorNotFoundError,
+    ActorStoppedError,
+    MessageTimeoutError,
+)
+
 # Import the native Rust module
 try:
-    from ._lyricore_py import PyActorContext as _PyActorContext
-    from ._lyricore_py import PyActorRef as _PyActorRef
-    from ._lyricore_py import PyActorSystem as _PyActorSystem
-    from ._lyricore_py import PyStoreConfig as _PyStoreConfig
+    from ._lyricore import PyActorContext as _PyActorContext
+    from ._lyricore import PyActorRef as _PyActorRef
+    from ._lyricore import PyActorSystem as _PyActorSystem
+    from ._lyricore import PyStoreConfig as _PyStoreConfig
 except ImportError as e:
     raise ImportError(
         f"Failed to import native lyricore module: {e}. "
@@ -44,30 +51,6 @@ __all__ = [
 # ============================================================================
 # Exception Classes
 # ============================================================================
-
-
-class ActorError(Exception):
-    """Base exception for all Actor-related errors."""
-
-    pass
-
-
-class ActorNotFoundError(ActorError):
-    """Raised when an actor cannot be found at the specified path."""
-
-    pass
-
-
-class ActorStoppedError(ActorError):
-    """Raised when trying to send a message to a stopped actor."""
-
-    pass
-
-
-class MessageTimeoutError(ActorError):
-    """Raised when an ask operation times out."""
-
-    pass
 
 
 # ============================================================================
@@ -126,11 +109,9 @@ class ActorContext:
     ) -> "ObjectStoreActorRef":
         """Spawn a child actor at the specified path."""
         from .actor_wrapper import (
-            ObjectStoreActorRef,
             _create_actor_init_dict,
             _wrap_actor_class,
         )
-        from .proxy_ref import EnhancedObjectStoreActorRef
 
         try:
             actor_class = _wrap_actor_class(actor_class)
@@ -141,24 +122,38 @@ class ActorContext:
             logger.debug(
                 f"  Construction task hash: {construction_task['function_hash']}"
             )
-            # Create actor using rust side core API
-            rust_ref = await self._rust_ctx.spawn_from_construction_task(
-                construction_task, path
-            )
-
-            # Return an enhanced ObjectStoreActorRef
-            base_ref = ActorRef(rust_ref)
-            original_ref = ObjectStoreActorRef(
-                base_ref, self._rust_ctx.get_store(), self.objectstore_config
-            )
-            return EnhancedObjectStoreActorRef(
-                original_ref, actor_class._original_class
+            return await self._spawn_construction_task(
+                construction_task, path, actor_class._original_class
             )
         except Exception as e:
             logger.error(
                 f"Failed to spawn enhanced actor {actor_class.__name__} at {path}: {e}"
             )
             raise RuntimeError(f"Failed to spawn enhanced actor: {e}")
+
+    async def _spawn_construction_task(
+        self,
+        construction_task: Dict[str, Any],
+        path: str,
+        actor_class: Optional[Type] = None,
+    ) -> "ObjectStoreActorRef":
+        """Spawn an actor from a construction task."""
+        from .actor_wrapper import ObjectStoreActorRef
+        from .proxy_ref import EnhancedObjectStoreActorRef
+
+        try:
+            rust_ref = await self._rust_ctx.spawn_from_construction_task(
+                construction_task, path
+            )
+            base_ref = ActorRef(rust_ref)
+            original_ref = ObjectStoreActorRef(
+                base_ref, self._rust_ctx.get_store(), self.objectstore_config
+            )
+            return EnhancedObjectStoreActorRef(original_ref, actor_class)
+        except Exception as e:
+            raise ActorError(
+                f"Failed to spawn actor from construction task: {e}"
+            ) from e
 
     async def actor_of(self, path: str) -> "ObjectStoreActorRef":
         """Get reference to an actor by path."""
@@ -203,10 +198,47 @@ class ActorRef:
 
     def __init__(self, rust_ref: _PyActorRef):
         self._rust_ref = rust_ref
+        self._init_serializable = True
+        self.__actor_ref_path__ = None
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        # Remove the executor as it's not serializable
+        state["__actor_ref_path__"] = self.path
+        state.pop("_rust_ref", None)
+        state.pop("_init_serializable", None)
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._init_serializable = False
+
+    async def _check_and_init(self):
+        if not self._init_serializable:
+            from . import get_global_inner_context
+
+            if not self.__actor_ref_path__:
+                raise ActorError("ActorRef path is not set for deserialized object")
+
+            inner_context = get_global_inner_context()
+            if not inner_context:
+                raise ActorError(
+                    "Global inner context is not set. Cannot restore ActorRef."
+                )
+
+            try:
+                rust_ref = await inner_context.actor_of(self.__actor_ref_path__)
+                self._rust_ref = rust_ref
+                self._init_serializable = True
+            except Exception as e:
+                raise ActorError(
+                    f"Failed to restore ActorRef for path {self.__actor_ref_path__}: {e}"
+                ) from e
 
     async def tell(self, message: Any) -> None:
         """Send a fire-and-forget message to the actor."""
         try:
+            await self._check_and_init()
             await self._rust_ref.tell(message)
         except RuntimeError as e:
             if "timeout" in str(e).lower():
@@ -221,6 +253,7 @@ class ActorRef:
     async def ask(self, message: Any, timeout: Optional[float] = None) -> Any:
         """Send a message and wait for a response."""
         try:
+            await self._check_and_init()
             timeout_ms = int(timeout * 1000) if timeout is not None else None
             return await self._rust_ref.ask(message, timeout_ms)
         except TimeoutError as e:
@@ -237,11 +270,15 @@ class ActorRef:
 
     def stop(self) -> None:
         """Stop the actor."""
+        if not self._init_serializable:
+            return
         self._rust_ref.stop()
 
     @property
     def path(self) -> str:
         """Get the actor's path."""
+        if not self._init_serializable:
+            return self.__actor_ref_path__
         return self._rust_ref.path
 
 
@@ -295,6 +332,10 @@ class ActorSystem:
             self._started = True
         except Exception as e:
             raise ActorError(f"Failed to start actor system: {e}") from e
+
+    async def after_start(self) -> None:
+        """Hook to run after the actor system has started."""
+        pass
 
     async def shutdown(self) -> None:
         """Shutdown the actor system."""

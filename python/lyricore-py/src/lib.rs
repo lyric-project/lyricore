@@ -5,7 +5,7 @@ mod py_actor_ref;
 mod py_actor_system;
 mod utils;
 
-use crate::py_actor_context::PyActorContext;
+use crate::py_actor_context::{PyActorContext, PyInnerContext};
 use crate::py_actor_ref::PyActorRef;
 use crate::py_actor_system::PyActorSystem;
 use pyo3::prelude::*;
@@ -35,10 +35,11 @@ pub fn build_info() -> String {
     )
 }
 
-fn _lyricore_py_init(m: &Bound<PyModule>) -> PyResult<()> {
+fn _lyricore_init(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<PyActorSystem>()?;
     m.add_class::<PyActorRef>()?;
     m.add_class::<PyActorContext>()?;
+    m.add_class::<PyInnerContext>()?;
     Ok(())
 }
 
@@ -52,7 +53,7 @@ fn _lyricore_store_init(m: &Bound<PyModule>) -> PyResult<()> {
 }
 
 #[pymodule]
-mod _lyricore_py {
+mod _lyricore {
     #[allow(clippy::wildcard_imports)]
     use super::*;
 
@@ -61,7 +62,7 @@ mod _lyricore_py {
         m.add("__version__", get_lyric_core_version())?;
         m.add("build_profile", env!("PROFILE"))?;
         m.add("build_info", build_info())?;
-        _lyricore_py_init(m)?;
+        _lyricore_init(m)?;
         _lyricore_store_init(m)?;
         Ok(())
     }

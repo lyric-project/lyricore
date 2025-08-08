@@ -40,7 +40,6 @@ pub enum ShardCommand {
     Shutdown,
 }
 
-
 pub enum SchedulerJobRequest {
     SubmitWork {
         work_item: WorkItem,
@@ -282,7 +281,6 @@ impl WorkerShard {
             }
         }
     }
-
 
     /// Uses a cache to quickly retrieve actors by their ID.
     fn get_actor_fast(&mut self, actor_id: ActorId) -> Option<LocalActorRef> {
@@ -568,13 +566,13 @@ impl WorkScheduler {
         match tokio::time::timeout(tokio::time::Duration::from_secs(30), response_rx).await {
             Ok(result) => match result {
                 Ok(response) => response,
-                Err(_) => Err(LyricoreActorError::Actor(crate::error::ActorError::RpcError(
-                    "Response channel error".to_string(),
-                ))),
+                Err(_) => Err(LyricoreActorError::Actor(
+                    crate::error::ActorError::RpcError("Response channel error".to_string()),
+                )),
             },
-            Err(_) => Err(LyricoreActorError::Actor(crate::error::ActorError::RpcError(
-                "Request timeout".to_string(),
-            ))),
+            Err(_) => Err(LyricoreActorError::Actor(
+                crate::error::ActorError::RpcError("Request timeout".to_string()),
+            )),
         }
     }
 

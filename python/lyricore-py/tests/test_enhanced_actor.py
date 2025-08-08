@@ -46,13 +46,13 @@ class TestImports:
 
     def test_import_objectstore_config(self):
         """Test ObjectStoreConfig import"""
-        from lyricore_py.actor_wrapper import ObjectStoreConfig
+        from lyricore.actor_wrapper import ObjectStoreConfig
 
         assert ObjectStoreConfig is not None
 
     def test_import_rust_components(self):
         """Test Rust component imports"""
-        from lyricore_py._lyricore_py import PyObjectStore, PyStoreConfig
+        from lyricore._lyricore import PyObjectStore, PyStoreConfig
 
         assert PyObjectStore is not None
         assert PyStoreConfig is not None
@@ -64,7 +64,7 @@ class TestObjectStoreConfig:
 
     def test_default_config_creation(self):
         """Test creating ObjectStoreConfig with defaults"""
-        from lyricore_py.actor_wrapper import ObjectStoreConfig
+        from lyricore.actor_wrapper import ObjectStoreConfig
 
         config = ObjectStoreConfig()
         assert config.auto_serialize_threshold == 1024 * 1024  # 1MB
@@ -74,7 +74,7 @@ class TestObjectStoreConfig:
 
     def test_custom_config_creation(self):
         """Test creating ObjectStoreConfig with custom values"""
-        from lyricore_py.actor_wrapper import ObjectStoreConfig
+        from lyricore.actor_wrapper import ObjectStoreConfig
 
         config = ObjectStoreConfig(
             auto_serialize_threshold=5 * 1024 * 1024,  # 5MB
@@ -87,7 +87,7 @@ class TestObjectStoreConfig:
 
     def test_config_auto_serialize_types(self, numpy_available):
         """Test that auto_serialize_types is set correctly"""
-        from lyricore_py.actor_wrapper import ObjectStoreConfig
+        from lyricore.actor_wrapper import ObjectStoreConfig
 
         config = ObjectStoreConfig()
         assert bytes in config.auto_serialize_types
@@ -106,7 +106,7 @@ class TestObjectStoreOperations:
     @pytest.fixture
     def objectstore(self):
         """Create a test ObjectStore instance"""
-        from lyricore_py._lyricore_py import PyObjectStore, PyStoreConfig
+        from lyricore._lyricore import PyObjectStore, PyStoreConfig
 
         config = PyStoreConfig(
             max_memory=128 * 1024 * 1024,  # 128MB
@@ -197,8 +197,8 @@ class TestMessageSerialization:
     @pytest.fixture
     def serializer(self):
         """Create a MessageSerializer instance"""
-        from lyricore_py._lyricore_py import PyObjectStore, PyStoreConfig
-        from lyricore_py.actor_wrapper import MessageSerializer, ObjectStoreConfig
+        from lyricore._lyricore import PyObjectStore, PyStoreConfig
+        from lyricore.actor_wrapper import MessageSerializer, ObjectStoreConfig
 
         store_config = PyStoreConfig(max_memory=64 * 1024 * 1024)
         store = PyObjectStore(store_config)
@@ -266,7 +266,7 @@ class TestMessageSerialization:
         assert serialized_kwargs["small"] == small_test_data
 
         # Check that large data is converted to ObjectStoreRef
-        from lyricore_py.actor_wrapper import ObjectStoreRef
+        from lyricore.actor_wrapper import ObjectStoreRef
 
         assert isinstance(serialized_args[1], ObjectStoreRef)
         assert isinstance(serialized_kwargs["large"], ObjectStoreRef)
@@ -292,8 +292,8 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_objectstore_ref_caching(self):
         """Test that ObjectStoreRef caches loaded objects"""
-        from lyricore_py._lyricore_py import PyObjectStore, PyStoreConfig
-        from lyricore_py.actor_wrapper import ObjectStoreRef
+        from lyricore._lyricore import PyObjectStore, PyStoreConfig
+        from lyricore.actor_wrapper import ObjectStoreRef
 
         # Create store and store an object
         store_config = PyStoreConfig(max_memory=64 * 1024 * 1024)
@@ -319,8 +319,8 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_serialization_fallback(self, numpy_available):
         """Test that serialization gracefully handles errors"""
-        from lyricore_py._lyricore_py import PyObjectStore, PyStoreConfig
-        from lyricore_py.actor_wrapper import MessageSerializer, ObjectStoreConfig
+        from lyricore._lyricore import PyObjectStore, PyStoreConfig
+        from lyricore.actor_wrapper import MessageSerializer, ObjectStoreConfig
 
         # Create serializer
         store_config = PyStoreConfig(max_memory=64 * 1024 * 1024)
@@ -342,7 +342,7 @@ class TestEdgeCases:
 
     def test_config_validation(self):
         """Test configuration validation"""
-        from lyricore_py.actor_wrapper import ObjectStoreConfig
+        from lyricore.actor_wrapper import ObjectStoreConfig
 
         # Test with invalid patterns
         config = ObjectStoreConfig(auto_serialize_patterns=[])

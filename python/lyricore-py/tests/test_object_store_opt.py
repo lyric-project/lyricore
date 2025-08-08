@@ -20,8 +20,8 @@ except ImportError:
     HAS_NUMPY = False
     np = None
 
-from lyricore_py import PyObjectStore, PyStoreConfig, pickle
-from lyricore_py.actor_wrapper import (
+from lyricore import PyObjectStore, PyStoreConfig, pickle
+from lyricore.actor_wrapper import (
     MessageSerializer,
     ObjectStoreConfig,
     ObjectStoreRef,
@@ -43,9 +43,9 @@ class LargeObject:
         if not isinstance(other, LargeObject):
             return False
         return (
-                self.size_mb == other.size_mb
-                and len(self.data) == len(other.data)
-                and self.data[:100] == other.data[:100]
+            self.size_mb == other.size_mb
+            and len(self.data) == len(other.data)
+            and self.data[:100] == other.data[:100]
         )  # Just check first 100 bytes for equality
         # self.data == other.data)  # Just check first 100 bytes for equality
 
@@ -61,11 +61,11 @@ class SerializationTestObject:
 
     def __eq__(self, other):
         return (
-                isinstance(other, SerializationTestObject)
-                and self.simple_attr == other.simple_attr
-                and self.dict_attr == other.dict_attr
-                and self.list_attr == other.list_attr
-                and self.none_attr == other.none_attr
+            isinstance(other, SerializationTestObject)
+            and self.simple_attr == other.simple_attr
+            and self.dict_attr == other.dict_attr
+            and self.list_attr == other.list_attr
+            and self.none_attr == other.none_attr
         )
 
 
@@ -282,7 +282,9 @@ class TestNumpyOperations:
     @pytest.mark.asyncio
     async def test_numpy_zero_copy(self, object_store, numpy_test_data):
         """Test NumPy zero copy mode"""
-        array = numpy_test_data["small_array"]  # Use smaller array for zero copy testing
+        array = numpy_test_data[
+            "small_array"
+        ]  # Use smaller array for zero copy testing
 
         object_id = await object_store.put_numpy(array, copy_mode="zero_copy")
         retrieved_array = await object_store.get_numpy(object_id)
@@ -388,7 +390,7 @@ class TestMessageSerialization:
 
     @pytest.mark.asyncio
     async def test_serialize_deserialize_simple_args(
-            self, message_serializer, small_test_data
+        self, message_serializer, small_test_data
     ):
         """Test serialization and deserialization of simple arguments"""
         args = (small_test_data, 42, "test")
@@ -411,7 +413,7 @@ class TestMessageSerialization:
     @pytest.mark.asyncio
     @pytest.mark.skipif(not HAS_NUMPY, reason="NumPy not available")
     async def test_serialize_deserialize_large_args(
-            self, object_store, message_serializer
+        self, object_store, message_serializer
     ):
         """Test serialization and deserialization of large object arguments"""
         large_array = np.random.rand(500, 500)  # About 2MB
@@ -843,7 +845,7 @@ class TestZeroCopyAndStats:
             b"bytes data" * 1000,
             list(range(1000)),
             "string data" * 100,
-            ]
+        ]
 
         # Store objects
         object_ids = []
@@ -982,7 +984,7 @@ class TestErrorHandlingAndEdgeCases:
                 result = await message_serializer._serialize_value(case)
                 # For small objects, should return original object
                 if case is not None and not (
-                        isinstance(case, float) and not np.isfinite(case)
+                    isinstance(case, float) and not np.isfinite(case)
                 ):
                     assert result == case
             except Exception as e:
@@ -1227,7 +1229,7 @@ class TestAdvancedFeaturesAndIntegration:
 
     @pytest.mark.asyncio
     async def test_objectstore_context_simulation(
-            self, object_store, objectstore_config
+        self, object_store, objectstore_config
     ):
         """Test simulating ObjectStore context usage"""
         # Simulate Actor using ObjectStore scenario

@@ -8,10 +8,10 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from lyricore_py import ActorContext, ActorSystem, actor
-from lyricore_py.py_actor import ActorError
-from lyricore_py.router import on
-from lyricore_py.tests.conftest import actor_system
+from lyricore import ActorContext, ActorSystem, actor
+from lyricore.py_actor import ActorError
+from lyricore.router import on
+from lyricore.tests.conftest import actor_system
 
 
 @dataclass

@@ -2,8 +2,8 @@ from typing import Any, List
 
 import pytest
 
-from lyricore_py import ActorContext, ActorSystem
-from lyricore_py.tests.conftest import actor_multiple_systems
+from lyricore import ActorContext, ActorSystem
+from lyricore.tests.conftest import actor_multiple_systems
 
 
 @pytest.mark.asyncio

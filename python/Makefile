@@ -14,12 +14,12 @@ install: .uv .pre-commit
 
 .PHONY: build-dev
 build-dev:
-	@rm -f lyricore-py/python/lyricore_py/*.so
+	@rm -f lyricore-py/python/lyricore/*.so
 	@cd lyricore-py && uv run maturin develop --uv
 
 .PHONY: build-prod
 build-prod:
-	@rm -f lyricore-py/python/lyricore_py/*.so
+	@rm -f lyricore-py/python/lyricore/*.so
 	@cd lyricore-py && uv run maturin develop --uv --release
 
 .PHONY: build-wasm
@@ -30,7 +30,7 @@ build-wasm:
 
 .PHONY: build-whl
 build-whl:
-	@rm -f lyricore-py/python/lyricore_py/*.so
+	@rm -f lyricore-py/python/lyricore/*.so
 #           args: --release --out dist --interpreter ${{ matrix.interpreter || '3.9 3.10 3.11 3.12 3.13 3.14 pypy3.10 pypy3.11' }}
 	@#cd lyricore-py && uv run maturin build --release --out dist -i 3.10
 	@cd lyricore-py && uv run maturin build --release --out dist -i 3.11
@@ -62,4 +62,4 @@ clean:
 	rm -f .coverage.*
 	rm -rf build
 	rm -rf perf.data*
-	rm -rf lyricore-py/python/lyricore_py/*.so
+	rm -rf lyricore-py/python/lyricore/*.so

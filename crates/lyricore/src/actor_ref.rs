@@ -1,11 +1,13 @@
 use crate::actor::{Actor, ActorContext};
 use crate::actor_system::NodeRegistry;
-use crate::error::{Result, LyricoreActorError};
+use crate::error::{LyricoreActorError, Result};
 use crate::message::InboxMessage;
 use crate::path::{ActorAddress, ActorId, ActorPath};
 use crate::rpc::actor_service;
+use crate::rpc::actor_service::{AskRequest, TellRequest};
 use crate::scheduler::{SchedulerJobRequest, WorkItem};
 use crate::serialization::{MessageEnvelope, MessageRegistry, SerFormat};
+use crate::stream::StreamConnectionManager;
 use crate::Message;
 use serde::{Deserialize, Serialize};
 use std::cell::UnsafeCell;
@@ -51,7 +53,7 @@ pub struct RemoteActorRef {
 #[derive(Clone, Debug)]
 pub enum ActorRef {
     Local(LocalActorRef),
-    Remote(RemoteActorRef),
+    Remote(StreamingRemoteActorRef),
 }
 
 impl ActorRef {
@@ -227,10 +229,7 @@ impl LocalActorRef {
     }
 
     pub fn stop(&self) {
-        let work_item = WorkItem::new(
-            self.inner.actor_id.clone(),
-            Box::new(InboxMessage::OnStop),
-        );
+        let work_item = WorkItem::new(self.inner.actor_id.clone(), Box::new(InboxMessage::OnStop));
         let _ = self.inner.job_sender.send(SchedulerJobRequest::SubmitWork {
             work_item,
             remote: false,
@@ -293,13 +292,13 @@ impl<A: Actor> ActorProcessor for ActorWrapper<A> {
                         };
                         self.actor.on_message(content, ctx).await
                     } else {
-                        Err(LyricoreActorError::Actor(crate::error::ActorError::RpcError(
-                            format!(
+                        Err(LyricoreActorError::Actor(
+                            crate::error::ActorError::RpcError(format!(
                                 "Message type mismatch: expected {}, got {}",
                                 MessageEnvelope::generate_message_type_id::<A::Message>(),
                                 envelope.message_type
-                            ),
-                        )))
+                            )),
+                        ))
                     }
                 }
                 InboxMessage::RpcEnvelopeMessage {
@@ -391,9 +390,9 @@ impl<A: Actor> ActorProcessor for ActorWrapper<A> {
                 _ => Ok(()),
             }
         } else {
-            Err(LyricoreActorError::Actor(crate::error::ActorError::RpcError(
-                "Invalid message type".to_string(),
-            )))
+            Err(LyricoreActorError::Actor(
+                crate::error::ActorError::RpcError("Invalid message type".to_string()),
+            ))
         }
     }
 }
@@ -501,16 +500,134 @@ impl RemoteActorRef {
                 let response: M::Response = envelope.deserialize(&self.inner.message_registry)?;
                 Ok(response)
             } else {
-                Err(LyricoreActorError::Actor(crate::error::ActorError::RpcError(
-                    "No response envelope".to_string(),
-                )))
+                Err(LyricoreActorError::Actor(
+                    crate::error::ActorError::RpcError("No response envelope".to_string()),
+                ))
             }
         } else {
-            Err(LyricoreActorError::Actor(crate::error::ActorError::RpcError(
-                ask_response
-                    .error
-                    .unwrap_or_else(|| "Unknown error".to_string()),
-            )))
+            Err(LyricoreActorError::Actor(
+                crate::error::ActorError::RpcError(
+                    ask_response
+                        .error
+                        .unwrap_or_else(|| "Unknown error".to_string()),
+                ),
+            ))
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct StreamingRemoteActorRef {
+    actor_id: ActorId,
+    stream_manager: Arc<StreamConnectionManager>,
+    message_registry: Arc<MessageRegistry>,
+    fallback_ref: Option<RemoteActorRef>, // Backup reference for non-streaming calls
+}
+
+impl StreamingRemoteActorRef {
+    pub fn new(
+        actor_id: ActorId,
+        stream_manager: Arc<StreamConnectionManager>,
+        message_registry: Arc<MessageRegistry>,
+        fallback_ref: Option<RemoteActorRef>,
+    ) -> Self {
+        Self {
+            actor_id,
+            stream_manager,
+            message_registry,
+            fallback_ref,
+        }
+    }
+
+    pub fn actor_path(&self) -> &ActorPath {
+        &self.actor_id.path
+    }
+
+    pub async fn tell<M: Message + Serialize + 'static>(
+        &self,
+        message: M,
+    ) -> crate::error::Result<()> {
+        let node_id = self.actor_id.path.system_address();
+
+        // Try to use streaming connection
+        if let Ok(envelope) = self.message_registry.create_local_envelope(&message) {
+            let request = TellRequest {
+                actor_id: self.actor_id.path.full_path(),
+                envelope: Some(envelope.into()),
+                trace_id: None,
+            };
+
+            // First try to send via streaming
+            // If it fails, fall back to regular gRPC
+            match self.stream_manager.stream_tell(&node_id, request).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    tracing::warn!("Stream tell failed, falling back to regular gRPC: {}", e);
+
+                    // Back to regular gRPC
+                    if let Some(ref fallback) = self.fallback_ref {
+                        return fallback.tell(message).await;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        Err(LyricoreActorError::Actor(
+            crate::error::ActorError::RpcError("Failed to create envelope".to_string()),
+        ))
+    }
+
+    pub async fn ask<M: Message + Serialize + for<'de> serde::Deserialize<'de> + 'static>(
+        &self,
+        message: M,
+    ) -> Result<M::Response>
+    where
+        M::Response: for<'de> serde::Deserialize<'de> + Serialize,
+    {
+        let node_id = self.actor_id.path.system_address();
+
+        if let Ok(envelope) = self.message_registry.create_local_envelope(&message) {
+            let request = AskRequest {
+                actor_id: self.actor_id.path.full_path(),
+                envelope: Some(envelope.into()),
+                correlation_id: String::new(), // It will be set by stream_manager
+                timeout_ms: Some(30000),
+                trace_id: None,
+            };
+
+            // Try to use streaming connection first
+            match self.stream_manager.stream_ask(&node_id, request).await {
+                Ok(response_envelope) => {
+                    let response: M::Response =
+                        response_envelope.deserialize(&self.message_registry)?;
+                    return Ok(response);
+                }
+                Err(e) => {
+                    tracing::warn!("Stream ask failed, falling back to regular gRPC: {}", e);
+
+                    // Back to regular gRPC
+                    if let Some(ref fallback) = self.fallback_ref {
+                        return fallback.ask(message).await;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        Err(LyricoreActorError::Actor(
+            crate::error::ActorError::RpcError("Failed to create envelope".to_string()),
+        ))
+    }
+
+    pub fn actor_id(&self) -> &ActorId {
+        &self.actor_id
+    }
+
+    pub fn get_stats(&self) -> Option<(u64, u64)> {
+        let node_id = self.actor_id.path.system_address();
+        self.stream_manager.get_stats(&node_id)
     }
 }

@@ -1,6 +1,8 @@
 import inspect
 from typing import Any, Callable, Dict, Optional, Type, Union
 
+from .error import ActorNoRouteError
+
 
 class MessageRouter:
     """The message router for handling different message types and method calls."""
@@ -61,7 +63,7 @@ class MessageRouter:
             else:
                 return self.default_handler(message, context)
 
-        raise ValueError(
+        raise ActorNoRouteError(
             f"No handler found for message: {message}. "
             "Ensure the message type is registered or a default handler is set."
         )
@@ -162,6 +164,13 @@ def _setup_message_routing(instance):
     # Scan the instance for methods with message handler decorators
     for name in dir(instance):
         if name.startswith("_"):
+            continue
+
+        # Get class-level attribute descriptor
+        class_attr = getattr(type(instance), name, None)
+
+        # Skip property attributes
+        if isinstance(class_attr, property):
             continue
 
         attr = getattr(instance, name)

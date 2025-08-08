@@ -1,5 +1,5 @@
 use crate::actor::Message;
-use crate::error::{Result, LyricoreActorError};
+use crate::error::{LyricoreActorError, Result};
 use crate::rpc::actor_service;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -27,9 +27,12 @@ impl TryFrom<i32> for SerFormat {
             1 => Ok(SerFormat::Protobuf),
             2 => Ok(SerFormat::Messagepack),
             255 => Ok(SerFormat::Custom),
-            _ => Err(LyricoreActorError::Actor(crate::error::ActorError::RpcError(
-                format!("Unknown serialization format: {}", value),
-            ))),
+            _ => Err(LyricoreActorError::Actor(
+                crate::error::ActorError::RpcError(format!(
+                    "Unknown serialization format: {}",
+                    value
+                )),
+            )),
         }
     }
 }
@@ -77,13 +80,15 @@ pub struct JsonSerializer;
 impl JsonSerializer {
     #[inline(always)]
     pub fn serialize<T: Serialize>(&self, value: &T) -> Result<Vec<u8>> {
-        serde_json::to_vec(value)
-            .map_err(|e| LyricoreActorError::Actor(crate::error::ActorError::RpcError(e.to_string())))
+        serde_json::to_vec(value).map_err(|e| {
+            LyricoreActorError::Actor(crate::error::ActorError::RpcError(e.to_string()))
+        })
     }
     #[inline(always)]
     pub fn deserialize<T: for<'de> Deserialize<'de>>(&self, data: &[u8]) -> Result<T> {
-        serde_json::from_slice(data)
-            .map_err(|e| LyricoreActorError::Actor(crate::error::ActorError::RpcError(e.to_string())))
+        serde_json::from_slice(data).map_err(|e| {
+            LyricoreActorError::Actor(crate::error::ActorError::RpcError(e.to_string()))
+        })
     }
 
     pub fn format(&self) -> SerFormat {
@@ -102,13 +107,15 @@ pub struct MessagePackSerializer;
 impl MessagePackSerializer {
     #[inline(always)]
     pub fn serialize<T: Serialize>(&self, value: &T) -> Result<Vec<u8>> {
-        rmp_serde::to_vec(value)
-            .map_err(|e| LyricoreActorError::Actor(crate::error::ActorError::RpcError(e.to_string())))
+        rmp_serde::to_vec(value).map_err(|e| {
+            LyricoreActorError::Actor(crate::error::ActorError::RpcError(e.to_string()))
+        })
     }
     #[inline(always)]
     pub fn deserialize<T: for<'de> Deserialize<'de>>(&self, data: &[u8]) -> Result<T> {
-        rmp_serde::from_slice(data)
-            .map_err(|e| LyricoreActorError::Actor(crate::error::ActorError::RpcError(e.to_string())))
+        rmp_serde::from_slice(data).map_err(|e| {
+            LyricoreActorError::Actor(crate::error::ActorError::RpcError(e.to_string()))
+        })
     }
 
     pub fn format(&self) -> SerFormat {

@@ -6,9 +6,11 @@ mod log;
 mod message;
 mod path;
 mod rpc;
+mod rpc_actor_service;
 mod runtime;
 mod scheduler;
 pub mod serialization;
+mod stream;
 mod utils;
 
 pub use actor::{Actor, ActorContext, Message};

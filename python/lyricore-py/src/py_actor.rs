@@ -4,7 +4,7 @@ use pyo3_async_runtimes::TaskLocals;
 use std::sync::{Arc, Weak};
 use tokio::sync::{mpsc, Mutex};
 
-use crate::py_actor_context::PyActorContext;
+use crate::py_actor_context::{PyActorContext, PyInnerContext};
 use crate::py_actor_system::{LangWorkerMessage, PyActorSystemInner};
 use crate::utils::{PyActorConstructionTask, PyActorDescriptor, PyMessage, PyResponse};
 use lyricore::error::{ActorError, LyricoreActorError, Result};
@@ -45,7 +45,7 @@ fn execute_construction_task(
     tracing::debug!("Executing construction task for actor");
 
     // Import the serialization module
-    let serialization_module = py.import("lyricore_py.serialization").map_err(|e| {
+    let serialization_module = py.import("lyricore.serialization").map_err(|e| {
         LyricoreActorError::Actor(ActorError::RpcError(format!(
             "Failed to import serialization module: {}",
             e
@@ -151,8 +151,13 @@ impl PyActorWrapper {
             ctx,
             self.runtime.clone(),
             self.event_loop.clone(),
+            self.new_inner_ctx(),
             self.system_inner.clone(),
         )
+    }
+
+    fn new_inner_ctx(&self) -> PyInnerContext {
+        PyInnerContext::new(self.system_inner.clone())
     }
 
     pub fn new_from_construction_task(
@@ -180,20 +185,14 @@ impl PyActorWrapper {
             return Ok(());
         }
 
-        let store = self
-            .with_actor_system(|sys| sys.store.clone())
-            .ok_or_else(|| {
-                LyricoreActorError::Actor(ActorError::RpcError(
-                    "Actor system not initialized".to_string(),
-                ))
-            })?;
+        let ctx = self.new_inner_ctx();
         let desc = self.descriptor.clone();
         let (actor_instance, methods) = rt
             .runtime
             .spawn_blocking(move || {
                 Python::with_gil(|py| {
-                    let store_module = py.import("lyricore_py")?;
-                    store_module.call_method1("set_global_object_store", (store,))?;
+                    let py_module = py.import("lyricore")?;
+                    py_module.call_method1("set_global_inner_context", (ctx,))?;
                     execute_construction_task(&desc, py)
                 })
             })
@@ -230,20 +229,27 @@ impl Actor for PyActorWrapper {
 
         if let Some(method) = on_start_method {
             tracing::debug!("Calling Python on_start method directly");
-            // 提取需要的数据，确保是 Send + Sync
             let event_loop_opt = self.event_loop.clone();
-            // 使用 spawn_blocking 在专门的线程中处理 Python 调用
+            let inner_ctx = self.new_inner_ctx();
             let future = Python::with_gil(|py| -> PyResult<_> {
-                // 创建 Python 上下文
+                let py_module = py.import("lyricore")?;
+                py_module.call_method1("set_global_inner_context", (inner_ctx,))?;
+
                 let py_ctx_obj = Py::new(py, py_ctx)?.into_any();
-                // 调用 Python on_start 方法
+                // Invoke Python on_start method
                 let result = method.call1(py, (py_ctx_obj,))?;
                 pyo3_async_runtimes::into_future_with_locals(
                     event_loop_opt.as_ref(),
                     result.into_bound(py),
                 )
             })?;
-            let _ = future.await?;
+            let _ = future.await.map_err(|e| {
+                tracing::warn!("Error in Python on_start method: {}", e);
+                LyricoreActorError::Actor(ActorError::RpcError(format!(
+                    "Error in Python on_start method: {}",
+                    e
+                )))
+            })?;
         }
         Ok(())
     }
@@ -267,8 +273,11 @@ impl Actor for PyActorWrapper {
             let event_loop = self.event_loop.clone();
 
             let py_msg_value = Python::with_gil(|py| msg.to_python(py))?;
+            let inner_ctx = self.new_inner_ctx();
 
             let feature = Python::with_gil(|py| -> PyResult<_> {
+                let py_module = py.import("lyricore")?;
+                py_module.call_method1("set_global_inner_context", (inner_ctx,))?;
                 let py_ctx_obj = Py::new(py, py_ctx)?.into_any();
 
                 // Invoke the Python on_message method
@@ -309,7 +318,11 @@ impl Actor for PyActorWrapper {
 
             // Handle the message conversion to Python
             let py_msg_value = Python::with_gil(|py| msg.to_python(py))?;
+            let inner_ctx = self.new_inner_ctx();
             let feature = Python::with_gil(|py| -> PyResult<_> {
+                let py_module = py.import("lyricore")?;
+                py_module.call_method1("set_global_inner_context", (inner_ctx,))?;
+
                 let py_ctx_obj = Py::new(py, py_ctx)?.into_any();
                 let result = method.call1(py, (py_msg_value, py_ctx_obj))?;
                 pyo3_async_runtimes::into_future_with_locals(
@@ -342,7 +355,11 @@ impl Actor for PyActorWrapper {
         if let Some(method) = on_stop_method {
             tracing::debug!("Calling Python on_stop method");
             let event_loop = self.event_loop.clone();
+            let inner_ctx = self.new_inner_ctx();
             let future = Python::with_gil(|py| -> PyResult<_> {
+                let py_module = py.import("lyricore")?;
+                py_module.call_method1("set_global_inner_context", (inner_ctx,))?;
+
                 let py_ctx_obj = Py::new(py, py_ctx)?.into_any();
                 let result = method.call1(py, (py_ctx_obj,))?;
                 pyo3_async_runtimes::into_future_with_locals(

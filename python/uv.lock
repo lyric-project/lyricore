@@ -9,8 +9,8 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "lyricore",
     "lyricore-mono",
-    "lyricore-py",
 ]
 
 [[package]]
@@ -907,6 +907,29 @@ wheels = [
 ]
 
 [[package]]
+name = "lyricore"
+source = { editable = "lyricore-py" }
+dependencies = [
+    { name = "cloudpickle" },
+    { name = "pympler" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.2", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version >= '3.11'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cloudpickle", specifier = ">=3.1.1" },
+    { name = "pympler", specifier = ">=1.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "numpy", specifier = ">=2.2.6" }]
+
+[[package]]
 name = "lyricore-mono"
 version = "0.1.0"
 source = { virtual = "." }
@@ -932,29 +955,6 @@ dev = [
     { name = "pytest-timeout" },
     { name = "ruff", specifier = ">=0.9.1" },
 ]
-
-[[package]]
-name = "lyricore-py"
-source = { editable = "lyricore-py" }
-dependencies = [
-    { name = "cloudpickle" },
-    { name = "pympler" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.3.2", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version >= '3.11'" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cloudpickle", specifier = ">=3.1.1" },
-    { name = "pympler", specifier = ">=1.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "numpy", specifier = ">=2.2.6" }]
 
 [[package]]
 name = "markupsafe"

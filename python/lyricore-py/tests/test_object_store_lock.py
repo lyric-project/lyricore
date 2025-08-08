@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from lyricore_py import PyObjectStore, PyStoreConfig
+from lyricore import PyObjectStore, PyStoreConfig
 
 # _COPY_MODE = "zero_copy"
 _COPY_MODE = "fast_copy"  # Use fast copy mode to avoid blocking
@@ -98,9 +98,15 @@ async def test_object_store_blocking_detection():
     )
 
     print(f"put_numpy blocking status:")
-    print(f"  - Actual heartbeats: {put_heartbeats_during}, Expected heartbeats: {put_expected_heartbeats}")
-    print(f"  - Heartbeat ratio: {put_blocking_ratio:.2f} (1.0 means non-blocking, 0.0 means completely blocked)")
-    print(f"  - Assessment: {'Blocking' if put_blocking_ratio < 0.5 else 'Non-blocking'}")
+    print(
+        f"  - Actual heartbeats: {put_heartbeats_during}, Expected heartbeats: {put_expected_heartbeats}"
+    )
+    print(
+        f"  - Heartbeat ratio: {put_blocking_ratio:.2f} (1.0 means non-blocking, 0.0 means completely blocked)"
+    )
+    print(
+        f"  - Assessment: {'Blocking' if put_blocking_ratio < 0.5 else 'Non-blocking'}"
+    )
 
     # Check get_numpy blocking
     get_expected_heartbeats = max(1, int(get_duration / 0.1))
@@ -111,13 +117,21 @@ async def test_object_store_blocking_detection():
     )
 
     print(f"get_numpy blocking status:")
-    print(f"  - Actual heartbeats: {get_heartbeats_during}, Expected heartbeats: {get_expected_heartbeats}")
-    print(f"  - Heartbeat ratio: {get_blocking_ratio:.2f} (1.0 means non-blocking, 0.0 means completely blocked)")
-    print(f"  - Assessment: {'Blocking' if get_blocking_ratio < 0.5 else 'Non-blocking'}")
+    print(
+        f"  - Actual heartbeats: {get_heartbeats_during}, Expected heartbeats: {get_expected_heartbeats}"
+    )
+    print(
+        f"  - Heartbeat ratio: {get_blocking_ratio:.2f} (1.0 means non-blocking, 0.0 means completely blocked)"
+    )
+    print(
+        f"  - Assessment: {'Blocking' if get_blocking_ratio < 0.5 else 'Non-blocking'}"
+    )
 
     # Verify data correctness (optional)
     assert retrieved_arr.shape == arr.shape
-    assert np.array_equal(retrieved_arr, arr)  # Uncomment if full verification is needed
+    assert np.array_equal(
+        retrieved_arr, arr
+    )  # Uncomment if full verification is needed
     np.testing.assert_array_equal(
         retrieved_arr, arr, err_msg="Retrieved array does not match original array"
     )
@@ -228,7 +242,9 @@ async def test_gap_analysis():
         print(f"  - Maximum gap during operation: {operation_max_gap * 1000:.1f}ms")
         print(f"  - Number of gaps during operation: {len(operation_gaps)}")
 
-        if operation_max_gap > avg_gap * 5:  # If max gap during operation exceeds average by 5x
+        if (
+            operation_max_gap > avg_gap * 5
+        ):  # If max gap during operation exceeds average by 5x
             print(
                 f"  - Assessment: Blocking detected (gap {operation_max_gap * 1000:.1f}ms exceeds expected)"
             )

@@ -121,7 +121,6 @@ impl From<std::net::AddrParseError> for LyricoreActorError {
     }
 }
 
-
 #[cfg(feature = "pyo3")]
 mod pyo3_conversions {
     use super::*;
@@ -181,8 +180,7 @@ macro_rules! py_try {
 #[macro_export]
 macro_rules! py_context {
     ($expr:expr, $context:literal) => {
-        $expr.map_err(|e: pyo3::PyErr| {
-            LyricoreActorError::Runtime(format!("{}: {}", $context, e))
-        })?
+        $expr
+            .map_err(|e: pyo3::PyErr| LyricoreActorError::Runtime(format!("{}: {}", $context, e)))?
     };
 }

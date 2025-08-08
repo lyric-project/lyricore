@@ -66,6 +66,16 @@ class EnhancedObjectStoreActorRef:
         if actor_class:
             self._create_method_proxies()
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_method_cache"] = {}
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        if self._actor_class:
+            self._create_method_proxies()
+
     def _create_method_proxies(self):
         """For the Actor class, create proxies for public methods."""
         if not self._actor_class:

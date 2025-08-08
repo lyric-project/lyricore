@@ -1,11 +1,11 @@
 from dataclasses import dataclass
-from typing import List
+from typing import Any, List
 
 import pytest
 
-from lyricore_py import ActorSystem, actor
-from lyricore_py.router import on
-from lyricore_py.tests.conftest import actor_system
+from lyricore import ActorContext, ActorSystem, actor
+from lyricore.router import on
+from lyricore.tests.conftest import actor_multiple_systems, actor_system
 
 
 # Define message types
@@ -164,3 +164,48 @@ async def test_raw_actor_call(actor_system: ActorSystem):
     assert result3 == "unknown message: {'unknown': 'message'}", (
         "Unknown message should be handled correctly"
     )
+
+
+@pytest.mark.asyncio
+async def test_multiple_actor_systems_method_ref(
+    actor_multiple_systems: List[ActorSystem],
+):
+    class MultipleCalculatorActor:
+        def __init__(self):
+            self.value = 0
+
+        async def handle_message(self, opt_dict: dict, ctx: ActorContext) -> Any:
+            """Handle operation with options"""
+            if opt_dict.get("operation") == "add":
+                x = opt_dict.get("x", 0)
+                y = opt_dict.get("y", 0)
+                self.value = x + y
+                return {"value": self.value}
+            elif opt_dict.get("operation") == "multiply":
+                x = opt_dict.get("x", 1)
+                y = opt_dict.get("y", 1)
+                self.value = x * y
+                return self.value
+            elif opt_dict.get("operation") == "get_value":
+                return self.value
+            return None
+
+    system1 = actor_multiple_systems[0]
+    system2 = actor_multiple_systems[1]
+
+    actor1 = await system1.spawn(MultipleCalculatorActor, "/user/calculator1")
+    remote_path = (
+        f"lyricore://{system1.system_name}@{system1.listen_address}/user/calculator1"
+    )
+    remote_calculator = await system2.actor_of(remote_path)
+
+    # Test addition on remote actor
+    result1 = await remote_calculator.ask({"operation": "add", "x": 10, "y": 20})
+    assert result1 == {"value": 30}, "10 + 20 should equal 30"
+    # Test multiplication on remote actor
+    result2 = await remote_calculator.ask({"operation": "multiply", "x": 5, "y": 6})
+    assert result2 == 30, "5 * 6 should equal 30"
+
+    # Test getting current value from remote actor
+    result3 = await remote_calculator.ask({"operation": "get_value"})
+    assert result3 == 30, "Current value should be 30 after operations"

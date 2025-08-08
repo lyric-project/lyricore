@@ -1,10 +1,10 @@
 use crate::fast_ops::{ExternalDataKeeper, FastCopyMode, FastMemOps};
+use crate::storage_data::StorageData;
 use crate::{DataType, ObjectId, ObjectMetadata, StoreError, StoredObject};
-use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::storage_data::StorageData;
 
 pub struct ObjectRef {
     inner: Arc<StoredObject>,
@@ -115,7 +115,7 @@ impl ObjectBuilder {
     }
 
     /// Zero-copy construction from an external reference
-    /// 
+    ///
     /// # Safety
     /// The caller must ensure that the pointer remains valid for the lifetime of the `keeper`.
     pub unsafe fn from_external_ref<T: 'static + Send + Sync>(
@@ -133,7 +133,7 @@ impl ObjectBuilder {
         self
     }
     /// Fast copy construction
-    /// 
+    ///
     /// # Safety
     /// Caller must ensure that the pointer is valid and readable.
     pub unsafe fn from_fast_copy(
@@ -193,7 +193,9 @@ impl ObjectBuilder {
         self
     }
     pub fn build(self) -> Result<StoredObject, StoreError> {
-        let data = self.data.ok_or(StoreError::Internal("No data provided".into()))?;
+        let data = self
+            .data
+            .ok_or(StoreError::Internal("No data provided".into()))?;
         let size = data.len();
 
         Ok(StoredObject {
@@ -279,7 +281,7 @@ impl ObjectStore {
     }
 
     /// Zero-copy(store external data reference)
-    /// 
+    ///
     /// # Safety
     /// Caller must ensure that the pointer remains valid for the lifetime of the `keeper`.
     pub async unsafe fn put_external_ref<T: 'static + Send + Sync>(
@@ -299,7 +301,7 @@ impl ObjectStore {
     }
 
     /// Zero-copy NumPy array storage
-    /// 
+    ///
     /// # Safety
     /// caller must ensure that the pointer remains valid for the lifetime of the `keeper`.
     pub async unsafe fn put_numpy_external_ref<T: 'static + Send + Sync>(
@@ -319,12 +321,18 @@ impl ObjectStore {
             track_access_time: true,
         };
 
-        let obj = StoredObject::from_external_ref(ObjectId::new(), ptr as *const u8, len, keeper, metadata);
+        let obj = StoredObject::from_external_ref(
+            ObjectId::new(),
+            ptr as *const u8,
+            len,
+            keeper,
+            metadata,
+        );
         self.put_object(obj).await
     }
 
     /// High-performance zero-copy storage
-    /// 
+    ///
     /// # Safety
     /// Caller must ensure that the pointer is valid and readable
     pub async unsafe fn put_fast_copy(
@@ -338,7 +346,7 @@ impl ObjectStore {
     }
 
     /// High-performance NumPy array storage with fast copy
-    /// 
+    ///
     /// # Safety
     /// Caller must ensure that the pointer is valid and readable
     pub async unsafe fn put_numpy_fast_copy(
@@ -355,7 +363,7 @@ impl ObjectStore {
     }
 
     /// Batch storage of objects
-    /// 
+    ///
     /// # Safety
     /// Caller must ensure that all pointers are valid and readable
     pub async unsafe fn put_batch_external_ref<T: 'static + Send + Sync + Clone>(
@@ -364,7 +372,7 @@ impl ObjectStore {
         keeper: T,
     ) -> Result<Vec<ObjectId>, StoreError> {
         let mut objects = Vec::with_capacity(data_list.len());
-        
+
         for (ptr, len) in data_list {
             let obj = StoredObject::from_external_ref(
                 ObjectId::new(),
@@ -378,9 +386,9 @@ impl ObjectStore {
 
         self.put_batch_objects(objects).await
     }
- 
+
     /// High-performance batch storage with fast copy
-    /// 
+    ///
     /// # Safety
     /// Caller must ensure that all pointers are valid and readable
     pub async unsafe fn put_batch_fast_copy(
@@ -389,7 +397,7 @@ impl ObjectStore {
         copy_mode: FastCopyMode,
     ) -> Result<Vec<ObjectId>, StoreError> {
         let mut objects = Vec::with_capacity(data_list.len());
-        
+
         for (ptr, len) in data_list {
             let data = FastMemOps::fast_copy(ptr, len, copy_mode);
             let obj = ObjectBuilder::new().from_vec(data).build()?;
@@ -400,7 +408,10 @@ impl ObjectStore {
     }
     /// Memory-mapped file storage
     #[cfg(feature = "mmap")]
-    pub async fn put_mmap_zero_copy(&self, file_path: &std::path::Path) -> Result<ObjectId, StoreError> {
+    pub async fn put_mmap_zero_copy(
+        &self,
+        file_path: &std::path::Path,
+    ) -> Result<ObjectId, StoreError> {
         use memmap2::Mmap;
         use std::fs::File;
 
@@ -410,37 +421,35 @@ impl ObjectStore {
         let mmap = unsafe { Mmap::map(&file) }
             .map_err(|e| StoreError::Internal(format!("Failed to mmap file: {}", e)))?;
 
-        let obj = StoredObject::from_mmap(
-            ObjectId::new(),
-            Arc::new(mmap),
-            ObjectMetadata::default(),
-        );
+        let obj =
+            StoredObject::from_mmap(ObjectId::new(), Arc::new(mmap), ObjectMetadata::default());
 
         self.put_object(obj).await
     }
     /// Get storage information for a single object
     pub async fn get_storage_info(&self, id: ObjectId) -> Result<StorageInfo, StoreError> {
         let objects = self.objects.read().await;
-        
+
         match objects.get(&id) {
-            Some(obj) => {
-                Ok(StorageInfo {
-                    id,
-                    size: obj.size,
-                    storage_type: obj.storage_type(),
-                    is_zero_copy: obj.is_zero_copy(),
-                    data_type: obj.metadata.data_type.clone(),
-                    shape: obj.metadata.shape.clone(),
-                    alignment: obj.metadata.alignment,
-                    created_at: obj.created_at,
-                    last_accessed: obj.last_accessed.load(std::sync::atomic::Ordering::Relaxed),
-                })
-            },
+            Some(obj) => Ok(StorageInfo {
+                id,
+                size: obj.size,
+                storage_type: obj.storage_type(),
+                is_zero_copy: obj.is_zero_copy(),
+                data_type: obj.metadata.data_type.clone(),
+                shape: obj.metadata.shape.clone(),
+                alignment: obj.metadata.alignment,
+                created_at: obj.created_at,
+                last_accessed: obj.last_accessed.load(std::sync::atomic::Ordering::Relaxed),
+            }),
             None => Err(StoreError::ObjectNotFound(id)),
         }
     }
     /// Get storage information for a batch of objects
-    pub async fn get_storage_info_batch(&self, ids: &[ObjectId]) -> Vec<Result<StorageInfo, StoreError>> {
+    pub async fn get_storage_info_batch(
+        &self,
+        ids: &[ObjectId],
+    ) -> Vec<Result<StorageInfo, StoreError>> {
         let mut results = Vec::with_capacity(ids.len());
         for &id in ids {
             results.push(self.get_storage_info(id).await);
@@ -536,9 +545,11 @@ impl ObjectStore {
         metadata_list: Option<Vec<ObjectMetadata>>,
     ) -> Result<Vec<ObjectId>, StoreError> {
         let metadata_list = metadata_list.unwrap_or_else(|| vec![ObjectMetadata::default(); count]);
-        
+
         if metadata_list.len() != count {
-            return Err(StoreError::Internal("Metadata list length must match count".into()));
+            return Err(StoreError::Internal(
+                "Metadata list length must match count".into(),
+            ));
         }
 
         let mut objects = Vec::with_capacity(count);
@@ -821,7 +832,8 @@ impl ObjectStore {
             max_memory_bytes: self.config.max_memory,
             max_object_size_bytes: self.config.max_object_size,
             memory_pressure_threshold: self.config.memory_pressure_threshold,
-            is_under_pressure: (stats.total_memory as f32 / self.config.max_memory as f32) > self.config.memory_pressure_threshold,
+            is_under_pressure: (stats.total_memory as f32 / self.config.max_memory as f32)
+                > self.config.memory_pressure_threshold,
         }
     }
     /// Get zero-copy statistics
@@ -839,20 +851,22 @@ impl ObjectStore {
                 "external_ref" => {
                     zero_copy_count += 1;
                     zero_copy_memory += obj.size;
-                },
-                "memory_mapped" => {  // 修复：添加 memory_mapped 的处理
+                }
+                "memory_mapped" => {
+                    // 修复：添加 memory_mapped 的处理
                     zero_copy_count += 1;
                     zero_copy_memory += obj.size;
-                },
+                }
                 "shared" => {
                     shared_count += 1;
                     shared_memory += obj.size;
-                },
+                }
                 "standard" => {
                     standard_count += 1;
                     standard_memory += obj.size;
-                },
-                _ => {  // Unknown storage type
+                }
+                _ => {
+                    // Unknown storage type
                     standard_count += 1;
                     standard_memory += obj.size;
                 }
@@ -867,10 +881,14 @@ impl ObjectStore {
             standard_objects: standard_count,
             standard_memory_bytes: standard_memory,
             total_objects: objects.len(),
-            zero_copy_ratio: if objects.is_empty() { 0.0 } else { zero_copy_count as f64 / objects.len() as f64 },
+            zero_copy_ratio: if objects.is_empty() {
+                0.0
+            } else {
+                zero_copy_count as f64 / objects.len() as f64
+            },
         }
     }
-   /// Cleanup objects by storage type
+    /// Cleanup objects by storage type
     pub async fn cleanup_by_storage_type(&self, storage_type: &str) -> Result<usize, StoreError> {
         let mut objects = self.objects.write().await;
         let mut removed_count = 0;
@@ -892,8 +910,12 @@ impl ObjectStore {
         }
 
         // Update statistics
-        self.stats.total_objects.fetch_sub(removed_count, std::sync::atomic::Ordering::Relaxed);
-        self.stats.total_memory.fetch_sub(removed_memory, std::sync::atomic::Ordering::Relaxed);
+        self.stats
+            .total_objects
+            .fetch_sub(removed_count, std::sync::atomic::Ordering::Relaxed);
+        self.stats
+            .total_memory
+            .fetch_sub(removed_memory, std::sync::atomic::Ordering::Relaxed);
 
         Ok(removed_count)
     }
@@ -901,23 +923,30 @@ impl ObjectStore {
     pub async fn warmup_cache(&self, ids: &[ObjectId]) -> Vec<Result<ObjectRef, StoreError>> {
         // Read the objects from the store
         let objects = self.objects.read().await;
-        
-        ids.iter().map(|&id| {
-            match objects.get(&id) {
+
+        ids.iter()
+            .map(|&id| match objects.get(&id) {
                 Some(obj) => {
-                    self.stats.cache_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    self.stats
+                        .cache_hits
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     Ok(ObjectRef::new(std::sync::Arc::clone(obj)))
-                },
+                }
                 None => {
-                    self.stats.cache_misses.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    self.stats
+                        .cache_misses
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     Err(StoreError::ObjectNotFound(id))
                 }
-            }
-        }).collect()
+            })
+            .collect()
     }
     /// Get memory pressure information
     pub fn get_memory_pressure_info(&self) -> MemoryPressureInfo {
-        let current_memory = self.stats.total_memory.load(std::sync::atomic::Ordering::Relaxed);
+        let current_memory = self
+            .stats
+            .total_memory
+            .load(std::sync::atomic::Ordering::Relaxed);
         let memory_ratio = current_memory as f32 / self.config.max_memory as f32;
         let is_under_pressure = memory_ratio > self.config.memory_pressure_threshold;
 
@@ -930,17 +959,24 @@ impl ObjectStore {
             bytes_until_pressure: if is_under_pressure {
                 0
             } else {
-                ((self.config.max_memory as f32 * self.config.memory_pressure_threshold) as usize).saturating_sub(current_memory)
+                ((self.config.max_memory as f32 * self.config.memory_pressure_threshold) as usize)
+                    .saturating_sub(current_memory)
             },
             bytes_over_pressure: if is_under_pressure {
-                current_memory.saturating_sub((self.config.max_memory as f32 * self.config.memory_pressure_threshold) as usize)
+                current_memory.saturating_sub(
+                    (self.config.max_memory as f32 * self.config.memory_pressure_threshold)
+                        as usize,
+                )
             } else {
                 0
             },
         }
     }
     /// Store a batch of objects
-    async fn put_batch_objects(&self, objects: Vec<StoredObject>) -> Result<Vec<ObjectId>, StoreError> {
+    async fn put_batch_objects(
+        &self,
+        objects: Vec<StoredObject>,
+    ) -> Result<Vec<ObjectId>, StoreError> {
         if objects.is_empty() {
             return Ok(Vec::new());
         }
@@ -957,7 +993,10 @@ impl ObjectStore {
         }
 
         // Check memory pressure before inserting
-        let current_memory = self.stats.total_memory.load(std::sync::atomic::Ordering::Relaxed);
+        let current_memory = self
+            .stats
+            .total_memory
+            .load(std::sync::atomic::Ordering::Relaxed);
         if current_memory + total_size > self.config.max_memory {
             self.cleanup_lru_objects().await?;
         }
@@ -970,13 +1009,17 @@ impl ObjectStore {
             for obj in objects {
                 let id = obj.id;
                 let size = obj.size;
-                
+
                 store_objects.insert(id, std::sync::Arc::new(obj));
                 ids.push(id);
 
                 // 更新统计
-                self.stats.total_objects.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                self.stats.total_memory.fetch_add(size, std::sync::atomic::Ordering::Relaxed);
+                self.stats
+                    .total_objects
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.stats
+                    .total_memory
+                    .fetch_add(size, std::sync::atomic::Ordering::Relaxed);
             }
         }
 
@@ -1092,7 +1135,8 @@ mod tests {
     #[test]
     fn test_object_ref() {
         let data = vec![1, 2, 3, 4, 5];
-        let obj = StoredObject::new::<Bytes>(ObjectId::new(), data.into(), ObjectMetadata::default());
+        let obj =
+            StoredObject::new::<Bytes>(ObjectId::new(), data.into(), ObjectMetadata::default());
 
         let obj_ref = ObjectRef::new(Arc::new(obj));
         assert_eq!(obj_ref.size(), 5);
@@ -1103,7 +1147,8 @@ mod tests {
     #[test]
     fn test_object_ref_clone() {
         let data = vec![1, 2, 3, 4, 5];
-        let obj = StoredObject::new::<Bytes>(ObjectId::new(), data.into(), ObjectMetadata::default());
+        let obj =
+            StoredObject::new::<Bytes>(ObjectId::new(), data.into(), ObjectMetadata::default());
 
         let obj_ref1 = ObjectRef::new(Arc::new(obj));
         let obj_ref2 = obj_ref1.clone();
@@ -1233,7 +1278,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod mmap_simple_tests {
     use super::*;
@@ -1269,18 +1313,21 @@ mod mmap_simple_tests {
             _mmap: mmap_arc.clone(),
         };
 
-        assert!(storage_data.is_zero_copy(), "StorageData should recognize mmap as zero-copy");
+        assert!(
+            storage_data.is_zero_copy(),
+            "StorageData should recognize mmap as zero-copy"
+        );
         assert_eq!(storage_data.storage_type(), "memory_mapped");
         assert_eq!(storage_data.as_slice(), test_data);
 
         // 测试 StoredObject
-        let stored_obj = StoredObject::from_mmap(
-            ObjectId::new(),
-            mmap_arc,
-            ObjectMetadata::default()
-        );
+        let stored_obj =
+            StoredObject::from_mmap(ObjectId::new(), mmap_arc, ObjectMetadata::default());
 
-        assert!(stored_obj.is_zero_copy(), "StoredObject should recognize mmap as zero-copy");
+        assert!(
+            stored_obj.is_zero_copy(),
+            "StoredObject should recognize mmap as zero-copy"
+        );
         assert_eq!(stored_obj.storage_type(), "memory_mapped");
         assert_eq!(stored_obj.data_slice(), test_data);
     }
@@ -1294,11 +1341,17 @@ mod mmap_simple_tests {
         let store = ObjectStore::default();
 
         // 测试通过 ObjectStore 的 mmap 功能
-        let id = store.put_mmap_zero_copy(&file_path).await.expect("Failed to put mmap");
+        let id = store
+            .put_mmap_zero_copy(&file_path)
+            .await
+            .expect("Failed to put mmap");
 
         let obj_ref = store.get(id).await.expect("Failed to get object");
         assert_eq!(obj_ref.storage_type(), "memory_mapped");
-        assert!(obj_ref.is_zero_copy(), "ObjectRef should recognize mmap as zero-copy");
+        assert!(
+            obj_ref.is_zero_copy(),
+            "ObjectRef should recognize mmap as zero-copy"
+        );
         assert_eq!(obj_ref.data(), test_data);
 
         // 测试零拷贝统计
@@ -1321,20 +1374,21 @@ mod mmap_simple_tests {
         let original_ptr = mmap.as_ptr();
         let mmap_arc = std::sync::Arc::new(mmap);
 
-        let stored_obj = StoredObject::from_mmap(
-            ObjectId::new(),
-            mmap_arc.clone(),
-            ObjectMetadata::default()
-        );
+        let stored_obj =
+            StoredObject::from_mmap(ObjectId::new(), mmap_arc.clone(), ObjectMetadata::default());
 
         // 验证指针一致性（真正的零拷贝）
         let stored_ptr = stored_obj.data_slice().as_ptr();
-        assert_eq!(original_ptr, stored_ptr,
-                   "StoredObject data pointer should match original mmap pointer for true zero-copy");
+        assert_eq!(
+            original_ptr, stored_ptr,
+            "StoredObject data pointer should match original mmap pointer for true zero-copy"
+        );
 
         // 验证通过 StorageData 获取的指针也相同
         let storage_ptr = stored_obj.data.as_ptr();
-        assert_eq!(original_ptr, storage_ptr,
-                   "StorageData as_ptr should match original mmap pointer");
+        assert_eq!(
+            original_ptr, storage_ptr,
+            "StorageData as_ptr should match original mmap pointer"
+        );
     }
 }

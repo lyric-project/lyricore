@@ -2,13 +2,13 @@ from typing import Any
 
 import pytest
 
-from lyricore_py import ActorContext, ActorSystem
-from lyricore_py.tests.conftest import actor_system
+from lyricore import ActorContext, ActorSystem
+from lyricore.tests.conftest import actor_system
 
 
 @pytest.mark.asyncio
 async def test_nested_local_class_with_function_serialization(
-        actor_system: ActorSystem,
+    actor_system: ActorSystem,
 ):
     """Test nested local class with function serialization version - should solve closure issues"""
 
@@ -117,13 +117,13 @@ async def test_complex_closure_capture(actor_system: ActorSystem):
                     if self.operation == "add":
                         # Complex addition: (value + message) * base_multiplier + extra_factor
                         self.value = (
-                                             self.value + message
-                                     ) * self.base_multiplier + self.extra_factor
+                            self.value + message
+                        ) * self.base_multiplier + self.extra_factor
                     elif self.operation == "multiply":
                         # Complex multiplication: (value * message) * base_multiplier + extra_factor
                         self.value = (
-                                             self.value * message
-                                     ) * self.base_multiplier + self.extra_factor
+                            self.value * message
+                        ) * self.base_multiplier + self.extra_factor
 
                     return {
                         "value": self.value,

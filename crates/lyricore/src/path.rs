@@ -1,6 +1,7 @@
-use crate::error::{ActorError, Result, LyricoreActorError};
+use crate::error::{ActorError, LyricoreActorError, Result};
 use serde::{Deserialize, Serialize};
 use std::hash::DefaultHasher;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::str::FromStr;
 
 /// Actor network address
@@ -24,7 +25,48 @@ impl ActorAddress {
 
     #[inline]
     pub fn is_local(&self) -> bool {
-        self.host == "localhost" || self.host == "127.0.0.1"
+        self.host == "localhost" || self.host == "127.0.0.1" || self.host == "::1"
+    }
+
+    /// Check if the address can be resolved to a valid SocketAddr
+    pub fn validate(&self) -> Result<()> {
+        let addr_str = format!("{}:{}", self.host, self.port);
+
+        // Try to resolve the address to ensure it's valid
+        match addr_str.to_socket_addrs() {
+            Ok(mut addrs) => {
+                if addrs.next().is_some() {
+                    Ok(())
+                } else {
+                    Err(LyricoreActorError::Actor(ActorError::InvalidState(
+                        format!("Cannot resolve address: {}", addr_str),
+                    )))
+                }
+            }
+            Err(e) => Err(LyricoreActorError::Actor(ActorError::InvalidState(
+                format!("Invalid address {}: {}", addr_str, e),
+            ))),
+        }
+    }
+
+    /// Get the string representation of the address
+    pub fn to_socket_addr(&self) -> Result<SocketAddr> {
+        let addr_str = format!("{}:{}", self.host, self.port);
+        addr_str
+            .to_socket_addrs()
+            .map_err(|e| {
+                LyricoreActorError::Actor(ActorError::InvalidState(format!(
+                    "Cannot resolve address {}: {}",
+                    addr_str, e
+                )))
+            })?
+            .next()
+            .ok_or_else(|| {
+                LyricoreActorError::Actor(ActorError::InvalidState(format!(
+                    "No valid address found for: {}",
+                    addr_str
+                )))
+            })
     }
 }
 
@@ -38,23 +80,55 @@ impl FromStr for ActorAddress {
     type Err = LyricoreActorError;
 
     fn from_str(s: &str) -> Result<Self> {
-        let parts: Vec<&str> = s.split(':').collect();
-        if parts.len() != 2 {
-            return Err(LyricoreActorError::Actor(ActorError::InvalidState(format!(
-                "Invalid address format: {}",
-                s
-            ))));
+        // Handle IPv6 addresses in brackets, e.g. [::1]:8080
+        if s.starts_with('[') {
+            if let Some(bracket_end) = s.find(']') {
+                let host = s[1..bracket_end].to_string();
+                let remainder = &s[bracket_end + 1..];
+
+                if !remainder.starts_with(':') {
+                    return Err(LyricoreActorError::Actor(ActorError::InvalidState(
+                        format!("Invalid IPv6 address format: {}", s),
+                    )));
+                }
+
+                let port = remainder[1..].parse().map_err(|_| {
+                    LyricoreActorError::Actor(ActorError::InvalidState(format!(
+                        "Invalid port in address: {}",
+                        s
+                    )))
+                })?;
+
+                let addr = Self { host, port };
+                // Validate the address format
+                addr.validate()?;
+                return Ok(addr);
+            }
         }
 
-        let host = parts[0].to_string();
-        let port = parts[1].parse().map_err(|_| {
+        // Handle the case where the address is in the format host:port
+        let parts: Vec<&str> = s.rsplitn(2, ':').collect();
+        if parts.len() != 2 {
+            return Err(LyricoreActorError::Actor(ActorError::InvalidState(
+                format!("Invalid address format: {} (expected host:port)", s),
+            )));
+        }
+
+        let port_str = parts[0];
+        let host = parts[1].to_string();
+
+        let port = port_str.parse().map_err(|_| {
             LyricoreActorError::Actor(ActorError::InvalidState(format!(
-                "Invalid port in address: {}",
-                s
+                "Invalid port '{}' in address: {}",
+                port_str, s
             )))
         })?;
 
-        Ok(Self { host, port })
+        let addr = Self { host, port };
+
+        // Validate the address format(optional, if you want to validate immediately)
+        // addr.validate()?;
+        Ok(addr)
     }
 }
 
@@ -165,10 +239,9 @@ impl ActorPath {
         // 2. lyricore://system/path (local path, no address)
 
         if !path_str.starts_with("lyricore://") {
-            return Err(LyricoreActorError::Actor(ActorError::InvalidState(format!(
-                "Invalid protocol in path: {}",
-                path_str
-            ))));
+            return Err(LyricoreActorError::Actor(ActorError::InvalidState(
+                format!("Invalid protocol in path: {}", path_str),
+            )));
         }
 
         let without_protocol = &path_str[11..]; // remove "lyricore://"
@@ -196,17 +269,9 @@ impl ActorPath {
                 path,
             })
         } else {
-            // Simple format: system
-            let (system, path) = system_part
-                .split_once('/')
-                .map(|(s, p)| (s.to_string(), p.to_string()))
-                .ok_or(LyricoreActorError::Actor(ActorError::InvalidState(format!(
-                    "Invalid path format: {}",
-                    path_str
-                ))))?;
             Ok(ActorPath {
                 protocol: "lyricore".to_string(),
-                system,
+                system: system_part.to_string(),
                 address: ActorAddress::local(0), // Default to 0
                 path,
             })
@@ -216,10 +281,9 @@ impl ActorPath {
     /// Parse from a simplified path format, using a default address if no address is provided.
     pub fn parse_with_default(path_str: &str, default_address: &ActorAddress) -> Result<Self> {
         if !path_str.starts_with("lyricore://") {
-            return Err(LyricoreActorError::Actor(ActorError::InvalidState(format!(
-                "Invalid protocol in path: {}",
-                path_str
-            ))));
+            return Err(LyricoreActorError::Actor(ActorError::InvalidState(
+                format!("Invalid protocol in path: {}", path_str),
+            )));
         }
 
         let without_protocol = &path_str[11..];
@@ -275,6 +339,7 @@ pub struct ActorId {
     pub runtime_id: String, // UUID，for internal use scheduler and runtime identification
     pub path: ActorPath,    // Full actor pat
 }
+
 /// Just compare the path for equality
 impl PartialEq for ActorId {
     fn eq(&self, other: &Self) -> bool {
@@ -347,6 +412,26 @@ mod tests {
         assert_eq!(addr2.host, "192.168.1.100");
         assert_eq!(addr2.port, 9090);
         assert!(!addr2.is_local());
+
+        // Test domain address parsing
+        let domain_addr: ActorAddress = "example.com:80".parse().unwrap();
+        assert_eq!(domain_addr.host, "example.com");
+        assert_eq!(domain_addr.port, 80);
+
+        // Test IPv6 address parsing
+        let ipv6_addr: ActorAddress = "[::1]:8080".parse().unwrap();
+        assert_eq!(ipv6_addr.host, "::1");
+        assert_eq!(ipv6_addr.port, 8080);
+        assert!(ipv6_addr.is_local());
+    }
+
+    #[test]
+    fn test_address_validation() {
+        let addr = ActorAddress::new("localhost".to_string(), 8888);
+        assert!(addr.validate().is_ok());
+
+        let domain_addr = ActorAddress::new("example.com".to_string(), 80);
+        // domain_addr.validate() May fail if DNS resolution is not available
     }
 
     #[test]
@@ -381,6 +466,12 @@ mod tests {
         assert_eq!(path.address.host, "localhost");
         assert_eq!(path.address.port, 8888);
         assert_eq!(path.path, "/user/my_actor");
+
+        // Test domain address parsing
+        let domain_path_str = "lyricore://test_system@example.com:80/user/my_actor";
+        let domain_path = ActorPath::parse(domain_path_str).unwrap();
+        assert_eq!(domain_path.address.host, "example.com");
+        assert_eq!(domain_path.address.port, 80);
 
         let default_addr = ActorAddress::local(8888);
         let simple_path = "lyricore://test_system/user/my_actor";

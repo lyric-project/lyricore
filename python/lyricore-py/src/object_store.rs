@@ -399,7 +399,7 @@ impl PyObjectView {
 
     // Transforms the object view into a Python object using pickle
     fn to_object(&self, py: Python) -> PyResult<PyObject> {
-        let pickle = py.import("lyricore_py.pickle")?;
+        let pickle = py.import("lyricore.pickle")?;
         let loads = pickle.getattr("loads")?;
         let data = self.inner.as_bytes();
         let py_bytes = PyBytes::new(py, data);
@@ -475,7 +475,7 @@ impl PyObjectStore {
                 .runtime
                 .spawn(async move {
                     Python::with_gil(|py| -> PyResult<Vec<u8>> {
-                        let pickle = py.import("lyricore_py.pickle")?;
+                        let pickle = py.import("lyricore.pickle")?;
                         let dumps = pickle.getattr("dumps")?;
                         let serialized = dumps.call1((obj,))?;
                         let bytes = serialized
@@ -516,7 +516,7 @@ impl PyObjectStore {
                 .spawn(async move {
                     Python::with_gil(|py| -> PyResult<PyObject> {
                         let data = obj_ref.data();
-                        let pickle = py.import("lyricore_py.pickle")?;
+                        let pickle = py.import("lyricore.pickle")?;
                         let loads = pickle.getattr("loads")?;
                         let py_bytes = PyBytes::new(py, data);
                         let res = loads.call1((py_bytes,))?;
@@ -934,7 +934,7 @@ impl PyObjectStore {
                 let store = Arc::clone(&store);
                 async move {
                     let data = Python::with_gil(|py| -> PyResult<Vec<u8>> {
-                        let pickle = py.import("lyricore_py.pickle")?;
+                        let pickle = py.import("lyricore.pickle")?;
                         let dumps = pickle.getattr("dumps")?;
                         let serialized = dumps.call1((obj,))?;
                         let bytes = serialized
@@ -1005,7 +1005,7 @@ impl PyObjectStore {
                 let mut objects = Vec::new();
                 for obj_ref in results {
                     let data = obj_ref.data();
-                    let pickle = py.import("lyricore_py.pickle")?;
+                    let pickle = py.import("lyricore.pickle")?;
                     let loads = pickle.getattr("loads")?;
                     let py_bytes = PyBytes::new(py, data);
                     let obj = loads.call1((py_bytes,))?;
@@ -1106,7 +1106,7 @@ impl PyObjectStore {
             let (data, estimated_size) = Python::with_gil(|py| -> PyResult<(Vec<u8>, usize)> {
                 let estimated_size = estimate_python_object_size(py, &obj)?;
 
-                let pickle = py.import("lyricore_py.pickle")?;
+                let pickle = py.import("lyricore.pickle")?;
                 let dumps = pickle.getattr("dumps")?;
                 let serialized = dumps.call1((obj,))?;
                 let bytes = serialized
@@ -1274,7 +1274,7 @@ fn map_store_error(error: StoreError) -> PyErr {
 }
 
 fn estimate_python_object_size(py: Python, obj: &PyObject) -> PyResult<usize> {
-    let sys = py.import("lyricore_py.utils")?;
+    let sys = py.import("lyricore.utils")?;
     let getsizeof = sys.getattr("get_sizeof")?;
     let size: usize = getsizeof.call1((obj,))?.extract()?;
     Ok(size)

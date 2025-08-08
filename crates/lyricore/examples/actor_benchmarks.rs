@@ -1,3 +1,4 @@
+use futures::future::join_all;
 use lyricore::serialization::{SerFormat, SerializationStrategy};
 use lyricore::{ActorContext, Message, SchedulerConfig};
 use serde::{Deserialize, Serialize};
@@ -5,7 +6,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
-use futures::future::join_all;
 
 struct FastActor {
     processed: AtomicU64,
@@ -74,9 +74,11 @@ impl TestResult {
         latencies.sort();
 
         let qps = successful_messages as f64 / duration.as_secs_f64();
-        let avg_latency_ms = latencies.iter()
+        let avg_latency_ms = latencies
+            .iter()
             .map(|d| d.as_secs_f64() * 1000.0)
-            .sum::<f64>() / latencies.len() as f64;
+            .sum::<f64>()
+            / latencies.len() as f64;
 
         let p95_idx = (latencies.len() as f64 * 0.95) as usize;
         let p99_idx = (latencies.len() as f64 * 0.99) as usize;
@@ -97,7 +99,10 @@ impl TestResult {
     fn print(&self, test_name: &str) {
         println!("✅ {} Results:", test_name);
         println!("   QPS: {:.0}", self.qps);
-        println!("   Success: {}/{}", self.successful_messages, self.total_messages);
+        println!(
+            "   Success: {}/{}",
+            self.successful_messages, self.total_messages
+        );
         println!("   Duration: {:.2}s", self.duration.as_secs_f64());
         println!("   Avg Latency: {:.3}ms", self.avg_latency_ms);
         println!("   P95 Latency: {:.3}ms", self.p95_latency_ms);
@@ -128,18 +133,18 @@ async fn run_performance_test(
 ) -> lyricore::error::Result<TestResult> {
     let test_name = format!("{:?} {:?}", system_type, operation_type);
     println!("🚀 Starting {} test...", test_name);
-    println!("   Actors: {}, Messages/actor: {}, Concurrent: {}",
-             actors, messages_per_actor, max_concurrent);
+    println!(
+        "   Actors: {}, Messages/actor: {}, Concurrent: {}",
+        actors, messages_per_actor, max_concurrent
+    );
 
     let mut system = match system_type {
-        SystemType::Optimized => {
-            lyricore::ActorSystem::new_optimized(
-                format!("{}_node", test_name.replace(" ", "_").to_lowercase()),
-                format!("127.0.0.1:{}", port),
-                SchedulerConfig::default(),
-                SerFormat::Json,
-            )?
-        }
+        SystemType::Optimized => lyricore::ActorSystem::new_optimized(
+            format!("{}_node", test_name.replace(" ", "_").to_lowercase()),
+            format!("127.0.0.1:{}", port),
+            SchedulerConfig::default(),
+            SerFormat::Json,
+        )?,
         SystemType::Baseline => {
             let strategy = SerializationStrategy::fast_local();
             lyricore::ActorSystem::new(
@@ -193,24 +198,20 @@ async fn run_performance_test(
                     let msg_id = (actor_idx * messages_per_actor + msg_idx) as u64;
 
                     let result = match operation_type {
-                        OperationType::Tell => {
-                            actor_ref
-                                .tell(FastMessage {
-                                    id: msg_id,
-                                    data: format!("{}_{}", msg_prefix, msg_id),
-                                })
-                                .await
-                                .is_ok()
-                        }
-                        OperationType::Ask => {
-                            actor_ref
-                                .ask(FastMessage {
-                                    id: msg_id,
-                                    data: format!("{}_{}", msg_prefix, msg_id),
-                                })
-                                .await
-                                .is_ok()
-                        }
+                        OperationType::Tell => actor_ref
+                            .tell(FastMessage {
+                                id: msg_id,
+                                data: format!("{}_{}", msg_prefix, msg_id),
+                            })
+                            .await
+                            .is_ok(),
+                        OperationType::Ask => actor_ref
+                            .ask(FastMessage {
+                                id: msg_id,
+                                data: format!("{}_{}", msg_prefix, msg_id),
+                            })
+                            .await
+                            .is_ok(),
                     };
 
                     let latency = req_start.elapsed();
@@ -241,7 +242,12 @@ async fn run_performance_test(
     let latencies = global_latencies.lock().unwrap().clone();
     let (total_messages, successful_messages) = *global_stats.lock().unwrap();
 
-    let result = TestResult::new(total_messages, successful_messages, total_duration, latencies);
+    let result = TestResult::new(
+        total_messages,
+        successful_messages,
+        total_duration,
+        latencies,
+    );
     result.print(&test_name);
 
     Ok(result)
@@ -259,7 +265,9 @@ struct ComparisonResult {
 impl ComparisonResult {
     fn new(test_name: String, baseline: TestResult, optimized: TestResult) -> Self {
         let qps_improvement = ((optimized.qps - baseline.qps) / baseline.qps) * 100.0;
-        let latency_improvement = ((baseline.avg_latency_ms - optimized.avg_latency_ms) / baseline.avg_latency_ms) * 100.0;
+        let latency_improvement = ((baseline.avg_latency_ms - optimized.avg_latency_ms)
+            / baseline.avg_latency_ms)
+            * 100.0;
 
         Self {
             test_name,
@@ -281,9 +289,15 @@ impl ComparisonResult {
         }
 
         println!("   Baseline Latency: {:.3}ms", self.baseline.avg_latency_ms);
-        println!("   Optimized Latency: {:.3}ms", self.optimized.avg_latency_ms);
+        println!(
+            "   Optimized Latency: {:.3}ms",
+            self.optimized.avg_latency_ms
+        );
         if self.latency_improvement > 0.0 {
-            println!("   ⚡ Latency Improvement: +{:.1}%", self.latency_improvement);
+            println!(
+                "   ⚡ Latency Improvement: +{:.1}%",
+                self.latency_improvement
+            );
         } else {
             println!("   🐌 Latency Change: {:.1}%", self.latency_improvement);
         }
@@ -306,7 +320,8 @@ async fn run_comparison_test(
         messages_per_actor,
         max_concurrent,
         base_port,
-    ).await?;
+    )
+    .await?;
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -317,7 +332,8 @@ async fn run_comparison_test(
         messages_per_actor,
         max_concurrent,
         base_port + 1,
-    ).await?;
+    )
+    .await?;
 
     let comparison = ComparisonResult::new(op_name, baseline, optimized);
     comparison.print();
@@ -338,8 +354,13 @@ async fn comprehensive_test() -> lyricore::error::Result<Vec<ComparisonResult>> 
     let mut all_results = Vec::new();
 
     for (scale_name, actors, messages_per_actor, max_concurrent) in test_configs {
-        println!("🔥 {} Test: {} actors × {} msgs = {} total",
-                 scale_name, actors, messages_per_actor, actors * messages_per_actor);
+        println!(
+            "🔥 {} Test: {} actors × {} msgs = {} total",
+            scale_name,
+            actors,
+            messages_per_actor,
+            actors * messages_per_actor
+        );
         println!("================================================");
 
         // Tell
@@ -349,7 +370,8 @@ async fn comprehensive_test() -> lyricore::error::Result<Vec<ComparisonResult>> 
             messages_per_actor,
             max_concurrent,
             50200,
-        ).await?;
+        )
+        .await?;
         all_results.push(tell_comparison);
 
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -361,7 +383,8 @@ async fn comprehensive_test() -> lyricore::error::Result<Vec<ComparisonResult>> 
             messages_per_actor,
             max_concurrent,
             50210,
-        ).await?;
+        )
+        .await?;
         all_results.push(ask_comparison);
 
         println!("================================================\n");
@@ -379,8 +402,12 @@ async fn stress_test() -> lyricore::error::Result<(TestResult, TestResult)> {
     let messages_per_actor = 100;
     let max_concurrent = 1000;
 
-    println!("🔥 Stress Config: {} actors × {} msgs = {} total",
-             actors, messages_per_actor, actors * messages_per_actor);
+    println!(
+        "🔥 Stress Config: {} actors × {} msgs = {} total",
+        actors,
+        messages_per_actor,
+        actors * messages_per_actor
+    );
 
     let tell_result = run_performance_test(
         SystemType::Optimized,
@@ -389,7 +416,8 @@ async fn stress_test() -> lyricore::error::Result<(TestResult, TestResult)> {
         messages_per_actor,
         max_concurrent,
         50220,
-    ).await?;
+    )
+    .await?;
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
@@ -400,7 +428,8 @@ async fn stress_test() -> lyricore::error::Result<(TestResult, TestResult)> {
         messages_per_actor,
         max_concurrent,
         50230,
-    ).await?;
+    )
+    .await?;
 
     println!("\n🏆 MAXIMUM PERFORMANCE ACHIEVED:");
     println!("================================");
@@ -410,7 +439,11 @@ async fn stress_test() -> lyricore::error::Result<(TestResult, TestResult)> {
     Ok((tell_result, ask_result))
 }
 
-fn print_final_summary(comparisons: &[ComparisonResult], stress_tell: &TestResult, stress_ask: &TestResult) {
+fn print_final_summary(
+    comparisons: &[ComparisonResult],
+    stress_tell: &TestResult,
+    stress_ask: &TestResult,
+) {
     println!("\n{}", "=".repeat(60));
     println!("🏁 FINAL PERFORMANCE SUMMARY");
     println!("{}", "=".repeat(60));
@@ -418,18 +451,22 @@ fn print_final_summary(comparisons: &[ComparisonResult], stress_tell: &TestResul
     println!("\n📊 Performance Improvements:");
     println!("{}", "-".repeat(30));
     for comparison in comparisons {
-        println!("• {}: QPS +{:.1}%, Latency +{:.1}%",
-                 comparison.test_name,
-                 comparison.qps_improvement,
-                 comparison.latency_improvement);
+        println!(
+            "• {}: QPS +{:.1}%, Latency +{:.1}%",
+            comparison.test_name, comparison.qps_improvement, comparison.latency_improvement
+        );
     }
 
     println!("\n🚀 Peak Performance (Stress Test):");
     println!("{}", "-".repeat(35));
-    println!("• TELL: {:.0} QPS (avg: {:.3}ms, p99: {:.3}ms)",
-             stress_tell.qps, stress_tell.avg_latency_ms, stress_tell.p99_latency_ms);
-    println!("• ASK:  {:.0} QPS (avg: {:.3}ms, p99: {:.3}ms)",
-             stress_ask.qps, stress_ask.avg_latency_ms, stress_ask.p99_latency_ms);
+    println!(
+        "• TELL: {:.0} QPS (avg: {:.3}ms, p99: {:.3}ms)",
+        stress_tell.qps, stress_tell.avg_latency_ms, stress_tell.p99_latency_ms
+    );
+    println!(
+        "• ASK:  {:.0} QPS (avg: {:.3}ms, p99: {:.3}ms)",
+        stress_ask.qps, stress_ask.avg_latency_ms, stress_ask.p99_latency_ms
+    );
 
     println!("\n🎯 Performance Goals Assessment:");
     println!("{}", "-".repeat(35));
@@ -450,18 +487,22 @@ fn print_final_summary(comparisons: &[ComparisonResult], stress_tell: &TestResul
         println!("❌ ASK: Below 50K QPS");
     }
 
-    let avg_qps_improvement: f64 = comparisons.iter()
-        .map(|c| c.qps_improvement)
-        .sum::<f64>() / comparisons.len() as f64;
+    let avg_qps_improvement: f64 =
+        comparisons.iter().map(|c| c.qps_improvement).sum::<f64>() / comparisons.len() as f64;
 
-    let avg_latency_improvement: f64 = comparisons.iter()
+    let avg_latency_improvement: f64 = comparisons
+        .iter()
         .map(|c| c.latency_improvement)
-        .sum::<f64>() / comparisons.len() as f64;
+        .sum::<f64>()
+        / comparisons.len() as f64;
 
     println!("\n📈 Overall Optimization Impact:");
     println!("{}", "-".repeat(35));
     println!("• Average QPS improvement: +{:.1}%", avg_qps_improvement);
-    println!("• Average latency improvement: +{:.1}%", avg_latency_improvement);
+    println!(
+        "• Average latency improvement: +{:.1}%",
+        avg_latency_improvement
+    );
 
     if avg_qps_improvement > 20.0 {
         println!("🎉 EXCELLENT optimization results!");
