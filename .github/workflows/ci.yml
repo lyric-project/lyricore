@@ -92,7 +92,7 @@ jobs:
             target: x86_64
           - os: macos
             target: aarch64
-            interpreter: 3.9 pypy3.10 pypy3.11
+            interpreter: 3.9 3.10 3.11 3.12 3.13 3.14 pypy3.10 pypy3.11
 
           # windows;
           # x86_64 pypy builds are not PGO optimized
