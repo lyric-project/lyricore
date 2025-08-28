@@ -7,7 +7,10 @@ from typing import (
     TypeVar,
 )
 
-from typing_extensions import ParamSpec
+try:
+    from typing import ParamSpec  # Python 3.10+
+except ImportError:
+    from typing_extensions import ParamSpec  # Python < 3.10
 
 T = TypeVar("T")
 P = ParamSpec("P")

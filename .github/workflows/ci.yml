@@ -72,7 +72,6 @@ jobs:
           - os: linux
             manylinux: auto
             target: x86_64
-            interpreter: pypy3.10 pypy3.11
 
           # musllinux
           - os: linux
@@ -92,7 +91,6 @@ jobs:
             target: x86_64
           - os: macos
             target: aarch64
-            interpreter: 3.9 3.10 3.11 3.12 3.13 3.14 pypy3.10 pypy3.11
 
           # windows;
           # x86_64 pypy builds are not PGO optimized
@@ -100,7 +98,6 @@ jobs:
           # aarch64 only 3.11 and up, also not PGO optimized
           - os: windows
             target: x86_64
-            interpreter: pypy3.10 pypy3.11
           - os: windows
             target: i686
             python-architecture: x86
@@ -210,13 +207,6 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
-      # Install protobuf compiler for release job
-      - name: Install protobuf compiler (Linux)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
-          protoc --version
-
       - name: get dist artifacts
         uses: actions/download-artifact@v4
         with:
@@ -226,9 +216,9 @@ jobs:
 
       - run: uv publish --trusted-publishing always
 
-      - name: upload to github release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/*.whl
-          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') }}
+#      - name: upload to github release
+#        uses: softprops/action-gh-release@v2
+#        with:
+#          files: |
+#            dist/*.whl
+#          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') }}

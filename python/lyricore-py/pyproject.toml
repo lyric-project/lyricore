@@ -5,7 +5,7 @@ build-backend = 'maturin'
 [project]
 name = 'lyricore'
 description = ""
-requires-python = '>=3.10'
+requires-python = '>=3.9'
 license = 'MIT'
 license-files = ['LICENSE']
 authors = []
@@ -30,6 +30,7 @@ classifiers = [
 dependencies = [
     "cloudpickle>=3.1.1",
     "pympler>=1.1",
+    "typing-extensions>=4.0.0; python_version<'3.10'",
 ]
 dynamic = ['readme', 'version']
 
@@ -58,7 +59,7 @@ managed = true
 
 [dependency-groups]
 dev = [
-    "numpy>=2.2.6",
+    "numpy>=2.0.0",
 ]
 [tool.ruff]
 line-length = 88

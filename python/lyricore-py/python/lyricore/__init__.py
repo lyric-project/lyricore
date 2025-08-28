@@ -25,7 +25,6 @@ __all__ = [
     "build_info",
     "build_profile",
     "get_global_object_store",
-    # "set_global_object_store",
     "get_global_inner_context",
     "set_global_inner_context",
     "get_current_message_context",
