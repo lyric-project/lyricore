@@ -9,7 +9,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 authors = ["fangyinc <staneyffer@gmail.com>"]
 edition = "2021"
 homepage = "https://github.com/fangyinc/lyric"
@@ -47,5 +47,5 @@ pyo3 = { version = "0.25", default-features = false}
 pyo3-async-runtimes = { version = "0.25", default-features = false }
 
 
-lyricore = { version = "0.1.1", path = "crates/lyricore", default-features = false }
-lyricore-store = { version = "0.1.1", path = "crates/lyricore-store", default-features = false }
+lyricore = { version = "0.1.2", path = "crates/lyricore", default-features = false }
+lyricore-store = { version = "0.1.2", path = "crates/lyricore-store", default-features = false }
