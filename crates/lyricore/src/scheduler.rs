@@ -1,16 +1,16 @@
 use crate::actor_ref::LocalActorRef;
 use crate::actor_system::ActorSystemInner;
-// use crate::cooperative_worker::{CooperativeConfig, CooperativeWorkerShard};
 use crate::error::LyricoreActorError;
 use crate::message::InboxMessage;
 use crate::path::ActorAddress;
 use crate::serialization::MessageEnvelope;
 use crate::{ActorContext, ActorId};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
+use tokio::time::{Duration, Instant};
 
 pub type ActorNumericId = u64;
 
@@ -37,6 +37,12 @@ pub enum ShardCommand {
     GetShardStats {
         response: oneshot::Sender<ShardStats>,
     },
+    /// Internal command to notify when an actor finishes processing
+    ActorProcessingComplete {
+        actor_id: ActorId,
+        processed_count: usize,
+        processing_time_ms: u64,
+    },
     Shutdown,
 }
 
@@ -53,6 +59,7 @@ pub enum SchedulerJobRequest {
         actor_id: ActorId,
     },
 }
+
 pub enum SchedulerCommand {
     GetStats {
         response: oneshot::Sender<SchedulerStats>,
@@ -86,19 +93,51 @@ impl WorkItem {
     }
 }
 
-/// The worker shard that handles a subset of actors and their messages.
+/// Actor processing state to track concurrent message processing
+#[derive(Debug)]
+struct ActorProcessingState {
+    /// Whether the actor is currently processing messages
+    is_processing: bool,
+    /// Queue of pending messages for this actor
+    message_queue: VecDeque<Box<dyn std::any::Any + Send>>,
+    /// Last time this actor was processed
+    last_processed: Instant,
+    /// Number of messages processed by this actor
+    processed_count: u64,
+}
+
+impl Default for ActorProcessingState {
+    fn default() -> Self {
+        Self {
+            is_processing: false,
+            message_queue: VecDeque::new(),
+            last_processed: Instant::now(),
+            processed_count: 0,
+        }
+    }
+}
+
+/// The worker shard that handles a subset of actors and their messages with concurrent processing.
 struct WorkerShard {
     worker_id: usize,
-    // Use the numeric ID as the key for faster access
+    /// Map of actor IDs to their references
     actors: HashMap<ActorId, LocalActorRef>,
-    // Pre-allocated vector to reduce reallocations
-    pending_messages: Vec<(ActorId, Box<dyn std::any::Any + Send>)>,
+    /// Map of actor IDs to their processing states
+    actor_states: HashMap<ActorId, ActorProcessingState>,
+    /// Channel to receive commands from the scheduler
     command_rx: mpsc::UnboundedReceiver<ShardCommand>,
+    /// Channel to send commands back to self (for async notifications)
+    self_tx: mpsc::UnboundedSender<ShardCommand>,
+    /// Shard statistics
     stats: ShardStats,
+    /// Configuration
     config: SchedulerConfig,
-    // Cache the last accessed actor to avoid repeated lookups
+    /// Cache the last accessed actor to avoid repeated lookups
     actor_cache: Option<(ActorId, LocalActorRef)>,
+    /// Reference to the actor system
     as_inner: Arc<ActorSystemInner>,
+    /// Semaphore to limit concurrent actor processing
+    processing_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -108,6 +147,10 @@ pub struct ShardStats {
     pub actor_count: usize,
     pub cache_hits: u64,
     pub cache_misses: u64,
+    /// Number of actors currently processing messages
+    pub concurrent_processing: usize,
+    /// Average processing time per message (in milliseconds)
+    pub avg_processing_time_ms: f64,
 }
 
 #[derive(Clone)]
@@ -118,6 +161,12 @@ pub struct SchedulerConfig {
     pub max_batch_wait_ms: u64,
     pub enable_actor_cache: bool,
     pub batch_send_threshold: usize,
+    /// Maximum number of actors that can process messages concurrently per shard
+    pub max_concurrent_actors_per_shard: usize,
+    /// Interval to check for idle actors (in milliseconds)
+    pub idle_actor_check_interval_ms: u64,
+    /// Maximum number of actors to schedule in one batch
+    pub max_actors_per_schedule_batch: usize,
 }
 
 impl Default for SchedulerConfig {
@@ -129,6 +178,9 @@ impl Default for SchedulerConfig {
             max_batch_wait_ms: 1,
             enable_actor_cache: true,
             batch_send_threshold: 64,
+            max_concurrent_actors_per_shard: 64,
+            idle_actor_check_interval_ms: 5,
+            max_actors_per_schedule_batch: 16,
         }
     }
 }
@@ -148,138 +200,462 @@ impl WorkerShard {
         config: SchedulerConfig,
         as_inner: Arc<ActorSystemInner>,
     ) -> Self {
+        let (self_tx, _) = mpsc::unbounded_channel();
+        let processing_semaphore = Arc::new(tokio::sync::Semaphore::new(
+            config.max_concurrent_actors_per_shard,
+        ));
+
         Self {
             worker_id,
-            actors: HashMap::with_capacity(1024), // Preallocate for better performance
-            pending_messages: Vec::with_capacity(config.batch_size * 2),
+            actors: HashMap::with_capacity(1024),
+            actor_states: HashMap::with_capacity(1024),
             command_rx,
+            self_tx,
             stats: ShardStats::default(),
             config,
             actor_cache: None,
             as_inner,
+            processing_semaphore,
         }
     }
 
     async fn run(&mut self) {
-        let mut batch_timer = tokio::time::interval(tokio::time::Duration::from_millis(
-            self.config.max_batch_wait_ms,
+        let mut idle_check_timer = tokio::time::interval(Duration::from_millis(
+            self.config.idle_actor_check_interval_ms,
         ));
-        batch_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        idle_check_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        // Create a new receiver that combines external commands with internal notifications
+        let (internal_tx, mut internal_rx) = mpsc::unbounded_channel();
+        self.self_tx = internal_tx;
 
         loop {
             tokio::select! {
                 Some(cmd) = self.command_rx.recv() => {
-                    match cmd {
-                        ShardCommand::RegisterActor { actor_id, numeric_id, actor_ref } => {
-                            tracing::debug!("Registering actor {:?} with numeric ID {} on worker {}",
-                                actor_id, numeric_id, self.worker_id);
-                            self.actors.insert(actor_id, actor_ref);
-                            self.stats.actor_count = self.actors.len();
-                        }
-                        ShardCommand::UnregisterActor { actor_id, numeric_id: _ } => {
-                            // 1. First, handle all pending messages for this actor (including possible OnStop)
-                            self.flush_pending_messages_for_actor(actor_id.clone()).await;
-                            self.actors.remove(&actor_id);
-                            // Clear the cache if it matches the unregistered actor
-                            if let Some((cached_id, _)) = &self.actor_cache {
-                                if *cached_id == actor_id {
-                                    self.actor_cache = None;
-                                }
-                            }
-                            self.stats.actor_count = self.actors.len();
-                        }
-                        ShardCommand::ProcessMessage {actor_id,  numeric_id: _, message } => {
-                            self.pending_messages.push((actor_id, message));
-                            self.stats.queue_length = self.pending_messages.len();
-
-                            if self.pending_messages.len() >= self.config.batch_size {
-                                self.process_message_batch().await;
+                    match self.handle_command(cmd).await {
+                        Ok(should_shutdown) => {
+                            if should_shutdown {
+                                break;
                             }
                         }
-                        ShardCommand::GetShardStats { response } => {
-                            let _ = response.send(self.stats.clone());
-                        }
-                        ShardCommand::Shutdown => {
-                            if !self.pending_messages.is_empty() {
-                                self.process_message_batch().await;
-                            }
-                            break;
+                        Err(e) => {
+                            tracing::error!("Worker {}: Error handling command: {}", self.worker_id, e);
                         }
                     }
                 }
 
-                _ = batch_timer.tick() => {
-                    if !self.pending_messages.is_empty() {
-                        self.process_message_batch().await;
+                Some(internal_cmd) = internal_rx.recv() => {
+                    match self.handle_command(internal_cmd).await {
+                        Ok(should_shutdown) => {
+                            if should_shutdown {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Worker {}: Error handling internal command: {}", self.worker_id, e);
+                        }
                     }
                 }
+
+                _ = idle_check_timer.tick() => {
+                    // Periodically check for idle actors with pending messages
+                    self.schedule_idle_actors().await;
+                }
+            }
+        }
+
+        // Shutdown: wait for all processing to complete
+        self.shutdown_all_actors().await;
+    }
+
+    /// Handle both external and internal commands
+    async fn handle_command(&mut self, cmd: ShardCommand) -> Result<bool, LyricoreActorError> {
+        match cmd {
+            ShardCommand::RegisterActor {
+                actor_id,
+                numeric_id,
+                actor_ref,
+            } => {
+                tracing::debug!(
+                    "Registering actor {:?} with numeric ID {} on worker {}",
+                    actor_id,
+                    numeric_id,
+                    self.worker_id
+                );
+                self.actors.insert(actor_id.clone(), actor_ref);
+                self.actor_states
+                    .insert(actor_id, ActorProcessingState::default());
+                self.stats.actor_count = self.actors.len();
+                Ok(false)
+            }
+
+            ShardCommand::UnregisterActor { actor_id, .. } => {
+                self.unregister_actor(actor_id).await;
+                Ok(false)
+            }
+
+            ShardCommand::ProcessMessage {
+                actor_id,
+                message,
+                ..
+            } => {
+                self.enqueue_message(actor_id, message).await;
+                Ok(false)
+            }
+
+            ShardCommand::ActorProcessingComplete {
+                actor_id,
+                processed_count,
+                processing_time_ms,
+            } => {
+                self.handle_processing_complete(actor_id, processed_count, processing_time_ms)
+                    .await;
+                Ok(false)
+            }
+
+            ShardCommand::GetShardStats { response } => {
+                self.update_stats();
+                let _ = response.send(self.stats.clone());
+                Ok(false)
+            }
+
+            ShardCommand::Shutdown => {
+                tracing::info!("Worker {} received shutdown command", self.worker_id);
+                Ok(true)
             }
         }
     }
 
-    // Batch processing of messages for all actors
-    async fn process_message_batch(&mut self) {
-        if self.pending_messages.is_empty() {
-            return;
+    /// Enqueue a message for an actor and potentially schedule it for processing
+    async fn enqueue_message(
+        &mut self,
+        actor_id: ActorId,
+        message: Box<dyn std::any::Any + Send>,
+    ) {
+        if let Some(actor_state) = self.actor_states.get_mut(&actor_id) {
+            actor_state.message_queue.push_back(message);
+
+            // If the actor is not currently processing and has messages, try to schedule it
+            if !actor_state.is_processing && !actor_state.message_queue.is_empty() {
+                self.try_schedule_actor(actor_id).await;
+            }
+        } else {
+            tracing::warn!(
+                "Worker {}: Message for unknown actor {:?}",
+                self.worker_id,
+                actor_id
+            );
         }
 
-        let mut actor_messages: HashMap<ActorId, Vec<Box<dyn std::any::Any + Send>>> =
-            HashMap::new();
+        self.update_queue_stats();
+    }
 
-        for (actor_id, message) in self.pending_messages.drain(..) {
-            actor_messages
-                .entry(actor_id)
-                .or_insert_with(Vec::new)
-                .push(message);
-        }
-
-        self.stats.queue_length = 0;
-
-        // Batch processing of messages for each actor
-        for (actor_id, messages) in actor_messages {
-            let actor_ref = self.get_actor_fast(actor_id.clone());
-            if let Some(actor_ref) = actor_ref {
-                self.process_actor_messages(&actor_ref, messages).await;
+    /// Try to schedule an actor for processing if resources are available
+    async fn try_schedule_actor(&mut self, actor_id: ActorId) {
+        // Try to acquire a permit for concurrent processing
+        if let Ok(permit) = self.processing_semaphore.clone().try_acquire_owned() {
+            // Check actor state first
+            let should_schedule = if let Some(actor_state) = self.actor_states.get(&actor_id) {
+                !actor_state.is_processing && !actor_state.message_queue.is_empty()
             } else {
+                false
+            };
+
+            if should_schedule {
+                // Get actor reference before mutable borrow
+                let actor_ref = self.get_actor_fast(actor_id.clone());
+
+                if let Some(actor_ref) = actor_ref {
+                    // Now get mutable reference to state and extract messages
+                    if let Some(actor_state) = self.actor_states.get_mut(&actor_id) {
+                        // Mark actor as processing
+                        actor_state.is_processing = true;
+                        actor_state.last_processed = Instant::now();
+
+                        // Extract all pending messages (ensures order preservation)
+                        let messages: Vec<_> = actor_state.message_queue.drain(..).collect();
+                        let message_count = messages.len();
+
+                        tracing::debug!(
+                            "Worker {}: Scheduling actor {:?} with {} messages",
+                            self.worker_id,
+                            actor_id,
+                            message_count
+                        );
+
+                        // Spawn async task to process messages
+                        let as_inner = Arc::clone(&self.as_inner);
+                        let actor_id_clone = actor_id.clone();
+                        let self_tx = self.self_tx.clone();
+
+                        tokio::spawn(async move {
+                            let start_time = Instant::now();
+
+                            let result = Self::process_actor_messages_concurrent(
+                                actor_ref,
+                                messages,
+                                as_inner,
+                            )
+                                .await;
+
+                            let processing_time = start_time.elapsed();
+
+                            // Notify the shard that processing is complete
+                            let _ = self_tx.send(ShardCommand::ActorProcessingComplete {
+                                actor_id: actor_id_clone,
+                                processed_count: message_count,
+                                processing_time_ms: processing_time.as_millis() as u64,
+                            });
+
+                            // Release the semaphore permit
+                            drop(permit);
+
+                            if let Err(e) = result {
+                                tracing::error!("Error in concurrent actor processing: {}", e);
+                            }
+                        });
+
+                        self.stats.concurrent_processing += 1;
+                    } else {
+                        // Actor state not found, release permit
+                        drop(permit);
+                    }
+                } else {
+                    // Actor reference not found, reset processing flag and release permit
+                    if let Some(actor_state) = self.actor_states.get_mut(&actor_id) {
+                        actor_state.is_processing = false;
+                    }
+                    drop(permit);
+                    tracing::warn!(
+                        "Worker {}: Actor reference not found for {:?}",
+                        self.worker_id,
+                        actor_id
+                    );
+                }
+            } else {
+                // Don't need to schedule, release permit
+                drop(permit);
+            }
+        }
+        // If we can't acquire a permit, the actor will be scheduled later
+    }
+
+    /// Process messages for an actor concurrently
+    async fn process_actor_messages_concurrent(
+        actor_ref: LocalActorRef,
+        messages: Vec<Box<dyn std::any::Any + Send>>,
+        as_inner: Arc<ActorSystemInner>,
+    ) -> Result<(), LyricoreActorError> {
+        let actor_id = actor_ref.actor_id().clone();
+        let mut ctx = ActorContext::new(actor_id, actor_ref.clone(), as_inner, None);
+
+        for message in messages {
+            if let Err(e) = actor_ref.process_message(message, &mut ctx).await {
                 tracing::warn!(
-                    "Worker {}: Actor not found for ID: {:?}",
+                    "Error processing message for actor {:?}: {}",
+                    actor_ref.actor_id(),
+                    e
+                );
+                // Continue processing other messages even if one fails
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle notification that an actor has completed processing
+    async fn handle_processing_complete(
+        &mut self,
+        actor_id: ActorId,
+        processed_count: usize,
+        processing_time_ms: u64,
+    ) {
+        if let Some(actor_state) = self.actor_states.get_mut(&actor_id) {
+            actor_state.is_processing = false;
+            actor_state.processed_count += processed_count as u64;
+            self.stats.processed_messages += processed_count as u64;
+
+            // Update average processing time
+            let total_processed = self.stats.processed_messages;
+            if total_processed > 0 {
+                self.stats.avg_processing_time_ms = (self.stats.avg_processing_time_ms
+                    * (total_processed - processed_count as u64) as f64
+                    + processing_time_ms as f64 * processed_count as f64)
+                    / total_processed as f64;
+            }
+
+            self.stats.concurrent_processing = self.stats.concurrent_processing.saturating_sub(1);
+
+            // If the actor has more messages pending, try to schedule it again
+            if !actor_state.message_queue.is_empty() {
+                self.try_schedule_actor(actor_id).await;
+            }
+        }
+
+        self.update_queue_stats();
+    }
+
+    /// Schedule idle actors that have pending messages
+    async fn schedule_idle_actors(&mut self) {
+        let now = Instant::now();
+        let mut scheduled_count = 0;
+
+        // Collect actor IDs that need scheduling (to avoid borrowing issues)
+        let mut actors_to_schedule = Vec::new();
+
+        for (actor_id, state) in &self.actor_states {
+            if !state.is_processing && !state.message_queue.is_empty() {
+                // Check if the actor has been idle for a reasonable time
+                let idle_duration = now.duration_since(state.last_processed);
+                if idle_duration.as_millis() > self.config.idle_actor_check_interval_ms as u128 {
+                    actors_to_schedule.push(actor_id.clone());
+                }
+            }
+        }
+
+        // Schedule actors up to the batch limit
+        for actor_id in actors_to_schedule {
+            if scheduled_count >= self.config.max_actors_per_schedule_batch {
+                break;
+            }
+
+            self.try_schedule_actor(actor_id).await;
+            scheduled_count += 1;
+        }
+
+        if scheduled_count > 0 {
+            tracing::trace!(
+                "Worker {}: Scheduled {} idle actors",
+                self.worker_id,
+                scheduled_count
+            );
+        }
+    }
+
+    /// Unregister an actor and handle cleanup
+    async fn unregister_actor(&mut self, actor_id: ActorId) {
+        if let Some(mut actor_state) = self.actor_states.remove(&actor_id) {
+            // Wait for the actor to finish processing if it's currently active
+            while actor_state.is_processing {
+                tracing::debug!(
+                    "Worker {}: Waiting for actor {:?} to finish processing before unregister",
                     self.worker_id,
                     actor_id
                 );
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                // In practice, we might want to use a more sophisticated waiting mechanism
+                if let Some(updated_state) = self.actor_states.get(&actor_id) {
+                    actor_state.is_processing = updated_state.is_processing;
+                } else {
+                    break;
+                }
+            }
+
+            // Process any remaining messages
+            if !actor_state.message_queue.is_empty() {
+                if let Some(actor_ref) = self.actors.get(&actor_id) {
+                    let remaining_messages: Vec<_> = actor_state.message_queue.drain(..).collect();
+                    tracing::debug!(
+                        "Worker {}: Processing {} remaining messages for unregistering actor {:?}",
+                        self.worker_id,
+                        remaining_messages.len(),
+                        actor_id
+                    );
+
+                    let as_inner = Arc::clone(&self.as_inner);
+                    let actor_ref = actor_ref.clone();
+
+                    // Process remaining messages synchronously to ensure cleanup
+                    if let Err(e) = Self::process_actor_messages_concurrent(
+                        actor_ref,
+                        remaining_messages,
+                        as_inner,
+                    )
+                        .await
+                    {
+                        tracing::error!(
+                            "Error processing remaining messages during actor unregister: {}",
+                            e
+                        );
+                    }
+                }
             }
         }
+
+        // Remove actor reference
+        self.actors.remove(&actor_id);
+
+        // Clear cache if it matches the unregistered actor
+        if let Some((cached_id, _)) = &self.actor_cache {
+            if *cached_id == actor_id {
+                self.actor_cache = None;
+            }
+        }
+
+        self.stats.actor_count = self.actors.len();
+        tracing::debug!(
+            "Worker {}: Unregistered actor {:?}",
+            self.worker_id,
+            actor_id
+        );
     }
-    // Handle flushing of pending messages for a specific actor
-    async fn flush_pending_messages_for_actor(&mut self, target_numeric_id: ActorId) {
-        let mut remaining_messages = Vec::new();
-        let mut target_messages = Vec::new();
 
-        for (numeric_id, message) in self.pending_messages.drain(..) {
-            if numeric_id == target_numeric_id {
-                target_messages.push(message);
-            } else {
-                remaining_messages.push((numeric_id, message));
-            }
-        }
+    /// Shutdown all actors and process remaining messages
+    async fn shutdown_all_actors(&mut self) {
+        tracing::info!("Worker {}: Shutting down all actors", self.worker_id);
 
-        // Restore remaining messages to the pending queue
-        self.pending_messages = remaining_messages;
-        self.stats.queue_length = self.pending_messages.len();
-
-        // Handle all messages for the target actor immediately
-        if !target_messages.is_empty() {
-            if let Some(actor_ref) = self.actors.get(&target_numeric_id) {
-                tracing::debug!(
-                    "Worker {}: Flushing {} pending messages for actor {}",
+        // Wait for all actors to finish processing
+        let mut wait_count = 0;
+        while self
+            .actor_states
+            .values()
+            .any(|state| state.is_processing)
+        {
+            wait_count += 1;
+            if wait_count % 100 == 0 {
+                let processing_count = self
+                    .actor_states
+                    .values()
+                    .filter(|state| state.is_processing)
+                    .count();
+                tracing::info!(
+                    "Worker {}: Waiting for {} actors to finish processing",
                     self.worker_id,
-                    target_messages.len(),
-                    target_numeric_id
+                    processing_count
                 );
-                // Add some timeout to avoid blocking indefinitely
-                self.process_actor_messages(&actor_ref.clone(), target_messages)
-                    .await;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        // Process all remaining messages
+        for (actor_id, mut state) in self.actor_states.drain() {
+            if !state.message_queue.is_empty() {
+                if let Some(actor_ref) = self.actors.get(&actor_id) {
+                    let remaining_messages: Vec<_> = state.message_queue.drain(..).collect();
+                    tracing::debug!(
+                        "Worker {}: Processing {} remaining messages for actor {:?} during shutdown",
+                        self.worker_id,
+                        remaining_messages.len(),
+                        actor_id
+                    );
+
+                    let as_inner = Arc::clone(&self.as_inner);
+                    let actor_ref = actor_ref.clone();
+
+                    if let Err(e) = Self::process_actor_messages_concurrent(
+                        actor_ref,
+                        remaining_messages,
+                        as_inner,
+                    )
+                        .await
+                    {
+                        tracing::error!("Error processing messages during shutdown: {}", e);
+                    }
+                }
             }
         }
+
+        tracing::info!("Worker {}: Shutdown complete", self.worker_id);
     }
 
     /// Uses a cache to quickly retrieve actors by their ID.
@@ -309,23 +685,25 @@ impl WorkerShard {
         }
     }
 
-    async fn process_actor_messages(
-        &mut self,
-        actor_ref: &LocalActorRef,
-        messages: Vec<Box<dyn std::any::Any + Send>>,
-    ) {
-        let message_count = messages.len();
+    /// Update queue-related statistics
+    fn update_queue_stats(&mut self) {
+        let total_queued: usize = self
+            .actor_states
+            .values()
+            .map(|state| state.message_queue.len())
+            .sum();
+        self.stats.queue_length = total_queued;
+    }
 
-        // Run messages batch processing in the actor's context
-        let as_inner = Arc::clone(&self.as_inner);
-        let actor_id = actor_ref.actor_id().clone();
-        let mut ctx = ActorContext::new(actor_id, actor_ref.clone(), as_inner, None);
-        for message in messages {
-            if let Err(e) = actor_ref.process_message(message, &mut ctx).await {
-                tracing::warn!("Worker {}: Error processing message: {}", self.worker_id, e);
-            }
-        }
-        self.stats.processed_messages += message_count as u64;
+    /// Update all statistics
+    fn update_stats(&mut self) {
+        self.update_queue_stats();
+        self.stats.actor_count = self.actors.len();
+        self.stats.concurrent_processing = self
+            .actor_states
+            .values()
+            .filter(|state| state.is_processing)
+            .count();
     }
 }
 
@@ -357,17 +735,10 @@ impl WorkScheduler {
             shard_senders.push(shard_tx);
 
             let config_clone = config.clone();
-
             let as_inner = Arc::clone(&as_inner);
+
             tokio::spawn(async move {
                 let mut shard = WorkerShard::new(worker_id, shard_rx, config_clone, as_inner);
-                // let cooperative = CooperativeConfig::default();
-                // let mut shard = CooperativeWorkerShard::new(
-                //     worker_id,
-                //     shard_rx,
-                //     cooperative,
-                //     as_inner,
-                // );
                 shard.run().await;
             });
         }
@@ -444,8 +815,9 @@ impl WorkScheduler {
                         Some(SchedulerJobRequest::UnregisterActor { actor_id }) => {
                             self.unregister_actor(actor_id);
                         }
-                        _ => {
+                        None => {
                             tracing::info!("Scheduler job request channel closed, exiting control loop.");
+                            break;
                         }
                     }
                 }

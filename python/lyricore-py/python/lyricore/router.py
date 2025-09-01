@@ -88,17 +88,21 @@ class MessageRouter:
         params = list(signature.parameters.keys())
 
         # If the last parameter is ctx/context, pass context
-        if params and params[-1] in ["ctx", "context"]:
-            if inspect.iscoroutinefunction(method):
-                return await method(*args, ctx=context, **kwargs)
+        try:
+            if params and params[-1] in ["ctx", "context"]:
+                if inspect.iscoroutinefunction(method):
+                    return await method(*args, ctx=context, **kwargs)
+                else:
+                    return method(*args, ctx=context, **kwargs)
             else:
-                return method(*args, ctx=context, **kwargs)
-        else:
-            # Without ctx/context, just call the method directly
-            if inspect.iscoroutinefunction(method):
-                return await method(*args, **kwargs)
-            else:
-                return method(*args, **kwargs)
+                # Without ctx/context, just call the method directly
+                if inspect.iscoroutinefunction(method):
+                    return await method(*args, **kwargs)
+                else:
+                    return method(*args, **kwargs)
+        except Exception as e:
+            # Raw exception from the method call
+            return e
 
 
 def on(message_type: Union[Type, str, None] = None):

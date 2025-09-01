@@ -64,8 +64,12 @@ impl PyActorContext {
         inner_ctx: PyInnerContext,
         system_inner: Option<Weak<PyActorSystemInner>>,
     ) -> Self {
-        let self_ref =
-            PyActorRef::new(ActorRef::Local(ctx.self_ref().clone()), runtime, event_loop);
+        let self_ref = PyActorRef::new(
+            ActorRef::Local(ctx.self_ref().clone()),
+            runtime,
+            event_loop,
+            system_inner.clone(),
+        );
         PyActorContext {
             actor_id: ctx.actor_id().to_string(),
             actor_ref: Arc::new(self_ref),

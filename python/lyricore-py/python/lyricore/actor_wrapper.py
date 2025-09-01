@@ -20,7 +20,7 @@ except ImportError:
     np = DummyNumpy()
 from . import pickle
 from ._lyricore import PyActorContext, PyObjectStore, PyStoreConfig
-from .error import ActorNoRouteError
+from .error import ActorHandlerError, ActorNoRouteError
 from .object_store import (
     ActorMessageContextVar,
     get_global_object_store,
@@ -168,7 +168,7 @@ def _wrap_actor_class(
 
                 async def default_handle_message(_self, message, ctx):
                     cls_name = type(_self).__name__
-                    raise NotImplementedError(
+                    raise ActorHandlerError(
                         f"No message handler defined for {cls_name} "
                         "actor, please implement 'on_message' or 'handle_message' method or "
                         "set 'needs_routing' to False. Received message: "
@@ -355,7 +355,13 @@ def _wrap_core_method_with_routing(
         # Invoke the original method with deserialized arguments if no routing was done
 
         with ActorMessageContextVar(actor_ctx):
-            result = await original_method(*deserialized_args, **deserialized_kwargs)
+            try:
+                result = await original_method(
+                    *deserialized_args, **deserialized_kwargs
+                )
+            except Exception as e:
+                # Raw exception from the method call
+                result = e
 
         # Serialize the result if needed
         if result is not None and method_name == "handle_message":
@@ -609,7 +615,10 @@ class ObjectStoreActorRef:
             return None
         logger.debug(f"Received response bytes: {result_bytes[:100]}... (truncated)")
         result = pickle.loads(result_bytes)
-        return await self._deserialize_response(result)
+        result = await self._deserialize_response(result)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
     async def _serialize_message(self, message: Any) -> Any:
         """Serialize a message, handling large objects and ObjectStore references"""
@@ -759,8 +768,8 @@ class ObjectStoreActorRef:
 
         return response
 
-    def stop(self):
-        return self.ref.stop()
+    async def stop(self):
+        return await self.ref.stop()
 
     @property
     def path(self):

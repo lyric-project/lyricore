@@ -343,6 +343,8 @@ impl ActorSystem {
             "{}:{}",
             self.inner.system_address.host, self.inner.system_address.port
         );
+        tracing::info!("Attempting to start actor system  on: {}", addr_str);
+
         let mut addrs = lookup_host(&addr_str).await.map_err(|e| {
             LyricoreActorError::Actor(crate::error::ActorError::RpcError(format!(
                 "DNS resolution failed: {}",
@@ -355,6 +357,14 @@ impl ActorSystem {
                 "No valid address found".to_string(),
             ))
         })?;
+
+        let test_listener = tokio::net::TcpListener::bind(&addr).await.map_err(|e| {
+            tracing::error!("Failed to bind to address {:?}: {}", addr, e);
+            LyricoreActorError::Actor(crate::error::ActorError::RpcError(format!(
+                "Failed to bind to address {:?}: {}", addr, e
+            )))
+        })?;
+        drop(test_listener); // Release the port immediately
 
         let concurrency_limit = 2000;
         let ask_timeout = std::time::Duration::from_secs(30);

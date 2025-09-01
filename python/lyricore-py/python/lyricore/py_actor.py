@@ -268,11 +268,11 @@ class ActorRef:
             else:
                 raise ActorError(str(e)) from e
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         """Stop the actor."""
         if not self._init_serializable:
             return
-        self._rust_ref.stop()
+        await self._rust_ref.stop()
 
     @property
     def path(self) -> str:

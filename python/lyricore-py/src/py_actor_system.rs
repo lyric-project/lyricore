@@ -4,7 +4,9 @@ use crate::py_actor_ref::PyActorRef;
 use crate::utils::py_value::PyValue;
 use crate::utils::{PyActorConstructionTask, PyActorDescriptor};
 use lyricore::serialization::SerializationStrategy;
-use lyricore::{ActorAddress, ActorContext, ActorPath, ActorSystem, SchedulerConfig, TokioRuntime};
+use lyricore::{
+    ActorAddress, ActorContext, ActorId, ActorPath, ActorSystem, SchedulerConfig, TokioRuntime,
+};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 use pyo3::{pyclass, pymethods, Bound, FromPyObject, PyAny, PyErr, PyObject, PyResult, Python};
@@ -80,7 +82,7 @@ impl PyActorSystemInner {
                 new_rt.clone(),
                 locals_clone,
                 Some(tx_task),
-                curr,
+                curr.clone(),
             );
 
             // Path starts with '/' or 'lyricore://'
@@ -104,7 +106,12 @@ impl PyActorSystemInner {
                 .await
                 .unwrap()?;
 
-            Ok(PyActorRef::new(rust_actor_ref, new_rt, Arc::new(locals)))
+            Ok(PyActorRef::new(
+                rust_actor_ref,
+                new_rt,
+                Arc::new(locals),
+                curr,
+            ))
         })
     }
 
@@ -247,7 +254,7 @@ impl PyActorSystemInner {
                 new_rt.clone(),
                 locals_clone,
                 Some(tx_task),
-                curr,
+                curr.clone(),
             );
 
             let actor_path = if path.starts_with('/') {
@@ -269,7 +276,12 @@ impl PyActorSystemInner {
                 .await
                 .unwrap()?;
 
-            Ok(PyActorRef::new(rust_actor_ref, new_rt, Arc::new(locals)))
+            Ok(PyActorRef::new(
+                rust_actor_ref,
+                new_rt,
+                Arc::new(locals),
+                curr,
+            ))
         })
     }
 
@@ -278,6 +290,7 @@ impl PyActorSystemInner {
         let rt = self.runtime.clone();
         let system_name = self.system_name.clone();
         let listen_address = self.listen_address.clone();
+        let curr = self.curr.clone();
 
         let locals = Python::with_gil(|py| pyo3_async_runtimes::tokio::get_current_locals(py))?;
         tracing::debug!("Using locals: {:?}", locals);
@@ -312,7 +325,24 @@ impl PyActorSystemInner {
                 })
                 .await
                 .unwrap()?;
-            Ok(PyActorRef::new(actor_ref, rt, Arc::new(locals)))
+            Ok(PyActorRef::new(actor_ref, rt, Arc::new(locals), curr))
+        })
+    }
+
+    pub(crate) fn stop<'a>(&self, py: Python<'a>, actor_id: ActorId) -> PyResult<Bound<'a, PyAny>> {
+        let inner = Arc::clone(&self.inner);
+        let rt = self.runtime.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let _ = rt
+                .runtime
+                .spawn(async move {
+                    let system = inner.lock().await;
+                    system.stop_local_actor(&actor_id)
+                })
+                .await
+                .unwrap()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            Ok(())
         })
     }
 }

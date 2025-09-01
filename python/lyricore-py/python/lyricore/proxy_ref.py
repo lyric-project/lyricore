@@ -142,8 +142,8 @@ class EnhancedObjectStoreActorRef:
     async def ask(self, message: Any, timeout: Optional[float] = None) -> Any:
         return await self._ref.ask(message, timeout)
 
-    def stop(self):
-        return self._ref.stop()
+    async def stop(self):
+        return await self._ref.stop()
 
     @property
     def path(self):

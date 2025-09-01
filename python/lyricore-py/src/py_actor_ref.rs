@@ -1,23 +1,31 @@
+use crate::py_actor_system::PyActorSystemInner;
 use crate::utils::py_value::PyValue;
 use crate::utils::PyMessage;
 use lyricore::{ActorRef, TokioRuntime};
-use pyo3::{pyclass, pymethods, FromPyObject, PyErr, PyObject, PyResult, Python};
+use pyo3::{pyclass, pymethods, Bound, FromPyObject, PyAny, PyErr, PyObject, PyResult, Python};
 use pyo3_async_runtimes::TaskLocals;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 #[pyclass]
 pub struct PyActorRef {
     inner: ActorRef,
     runtime: TokioRuntime,
     event_loop: Arc<TaskLocals>,
+    system_inner: Option<Weak<PyActorSystemInner>>,
 }
 
 impl PyActorRef {
-    pub fn new(actor_ref: ActorRef, runtime: TokioRuntime, event_loop: Arc<TaskLocals>) -> Self {
+    pub fn new(
+        actor_ref: ActorRef,
+        runtime: TokioRuntime,
+        event_loop: Arc<TaskLocals>,
+        system_inner: Option<Weak<PyActorSystemInner>>,
+    ) -> Self {
         Self {
             inner: actor_ref,
             runtime,
             event_loop,
+            system_inner,
         }
     }
 
@@ -26,7 +34,17 @@ impl PyActorRef {
             inner: self.inner.clone(),
             runtime: self.runtime.clone(),
             event_loop: self.event_loop.clone(),
+            system_inner: self.system_inner.clone(),
         }
+    }
+    fn with_actor_system<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&PyActorSystemInner) -> R,
+    {
+        self.system_inner
+            .as_ref()
+            .and_then(|weak| weak.upgrade())
+            .map(|arc| f(&arc))
     }
 }
 
@@ -78,8 +96,18 @@ impl PyActorRef {
         Python::with_gil(|py| result.to_python(py))
     }
 
-    fn stop(&self) {
-        self.inner.stop();
+    fn stop<'a>(&self, py: Python<'a>) -> PyResult<Bound<'a, PyAny>> {
+        match self.inner {
+            ActorRef::Local(ref local_ref) => self
+                .with_actor_system(|sys| sys.stop(py, local_ref.actor_id().clone()))
+                .ok_or(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                    "Actor system is not available or has been dropped",
+                ))?,
+            ActorRef::Remote(_) => {
+                // No-op for remote actors
+                pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(()) })
+            }
+        }
     }
 
     #[getter]

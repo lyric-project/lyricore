@@ -128,7 +128,7 @@ class ActorFactory:
         try:
             if actor_path in self.local_actors:
                 actor_ref = self.local_actors[actor_path]
-                actor_ref.stop()
+                await actor_ref.stop()
                 del self.local_actors[actor_path]
                 self.stats.active_actors -= 1
 
