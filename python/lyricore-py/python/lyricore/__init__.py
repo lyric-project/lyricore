@@ -7,6 +7,7 @@ from ._lyricore import (
     build_info,
     build_profile,
 )
+from ._queue import Queue
 from .object_store import (
     get_current_message_context,
     get_global_inner_context,
@@ -33,4 +34,5 @@ __all__ = [
     "ActorSystem",
     "actor",
     "on",
+    "Queue",
 ]
