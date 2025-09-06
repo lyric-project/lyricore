@@ -1,5 +1,5 @@
 use lyricore::error::LyricoreActorError;
-use lyricore::{ActorError, Message};
+use lyricore::{ActorError, Event, Message};
 use py_value::PyValue;
 use pyo3::prelude::PyAnyMethods;
 use pyo3::{Bound, FromPyObject, IntoPyObject, IntoPyObjectExt, PyAny, PyObject, PyResult, Python};
@@ -79,6 +79,7 @@ impl PyActorDescriptor {
 pub struct PyMessage {
     inner: PyValue,
 }
+impl Event for PyMessage {}
 
 impl PyMessage {
     pub fn new(value: PyValue) -> Self {

@@ -3,11 +3,14 @@ mod py_actor;
 mod py_actor_context;
 mod py_actor_ref;
 mod py_actor_system;
+mod py_eventbus;
 mod utils;
 
 use crate::py_actor_context::{PyActorContext, PyInnerContext};
 use crate::py_actor_ref::PyActorRef;
 use crate::py_actor_system::PyActorSystem;
+use crate::py_eventbus::{PyEventBus, PyTopicClassifier};
+
 use pyo3::prelude::*;
 use std::sync::OnceLock;
 
@@ -40,6 +43,8 @@ fn _lyricore_init(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<PyActorRef>()?;
     m.add_class::<PyActorContext>()?;
     m.add_class::<PyInnerContext>()?;
+    m.add_class::<PyEventBus>()?;
+    m.add_class::<PyTopicClassifier>()?;
     Ok(())
 }
 

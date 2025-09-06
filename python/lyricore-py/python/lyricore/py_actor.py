@@ -281,6 +281,11 @@ class ActorRef:
             return self.__actor_ref_path__
         return self._rust_ref.path
 
+    @property
+    def raw_ref(self) -> _PyActorRef:
+        """Get the underlying Rust actor reference."""
+        return self._rust_ref
+
 
 # ============================================================================
 # Actor System

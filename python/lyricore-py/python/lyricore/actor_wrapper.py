@@ -775,6 +775,14 @@ class ObjectStoreActorRef:
     def path(self):
         return self.ref.path
 
+    @property
+    def raw_ref(self):
+        return self.ref.raw_ref
+
+    @property
+    def curr_store(self):
+        return self.store
+
     def __getattr__(self, name):
         return getattr(self.ref, name)
 

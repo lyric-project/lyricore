@@ -12,6 +12,7 @@ mod scheduler;
 pub mod serialization;
 mod stream;
 mod utils;
+mod eventbus;
 
 pub use actor::{Actor, ActorContext, Message};
 pub use actor_ref::{ActorRef, LocalActorRef, RemoteActorRef};
@@ -21,3 +22,5 @@ pub use log::init_tracing_subscriber;
 pub use path::{ActorAddress, ActorId, ActorPath};
 pub use runtime::TokioRuntime;
 pub use scheduler::SchedulerConfig;
+
+pub use eventbus::{Event, EventBus, EventBusConfig, EventBusStats, SubscriptionId, EventClassifier, AllEventsClassifier, TopicClassifier, PublishResult};

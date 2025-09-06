@@ -1,5 +1,6 @@
 import inspect
 from typing import (
+    TYPE_CHECKING,
     Any,
     Dict,
     Optional,
@@ -11,6 +12,9 @@ try:
     from typing import ParamSpec  # Python 3.10+
 except ImportError:
     from typing_extensions import ParamSpec  # Python < 3.10
+
+if TYPE_CHECKING:
+    from .py_actor import ObjectStoreActorRef
 
 T = TypeVar("T")
 P = ParamSpec("P")
@@ -148,3 +152,11 @@ class EnhancedObjectStoreActorRef:
     @property
     def path(self):
         return self._ref.path
+
+    @property
+    def raw_ref(self):
+        return self._ref.raw_ref
+
+    @property
+    def curr_store(self):
+        return self._ref.curr_store

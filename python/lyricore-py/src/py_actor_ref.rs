@@ -7,8 +7,9 @@ use pyo3_async_runtimes::TaskLocals;
 use std::sync::{Arc, Weak};
 
 #[pyclass]
+#[derive(Clone)]
 pub struct PyActorRef {
-    inner: ActorRef,
+    pub(crate) inner: ActorRef,
     runtime: TokioRuntime,
     event_loop: Arc<TaskLocals>,
     system_inner: Option<Weak<PyActorSystemInner>>,
@@ -74,7 +75,7 @@ impl PyActorRef {
         let rt = self.runtime.clone();
         let py_value = Python::with_gil(|py| PyValue::extract_bound(&message.bind(py)))?;
         let py_msg = PyMessage::new(py_value);
-        let result = rt
+        let my_res = rt
             .runtime
             .spawn(async move {
                 let result = if let Some(timeout) = timeout_ms {
@@ -93,7 +94,7 @@ impl PyActorRef {
             })
             .await
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))??;
-        Python::with_gil(|py| result.to_python(py))
+        Python::with_gil(|py| my_res.to_python(py))
     }
 
     fn stop<'a>(&self, py: Python<'a>) -> PyResult<Bound<'a, PyAny>> {
